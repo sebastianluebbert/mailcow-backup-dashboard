@@ -91,6 +91,17 @@ class EnterpriseUiContractTests(unittest.TestCase):
             for asset in suite_files:
                 self.assertIn(asset, contents, f"{asset} missing from {script_path}")
 
+    def test_checkbox_fieldsets_do_not_inherit_text_input_styling(self):
+        # Regression guard: server/static/styles.css styles `.field input` as a
+        # full-width text input. The <fieldset> wrapping the backup-components
+        # checkboxes must never carry the "field" class itself (only
+        # "field-wide" for the grid span), or its checkboxes inherit that
+        # styling via the descendant selector and render as giant blocks.
+        app_js = (ROOT / "server" / "static" / "app.js").read_text(encoding="utf-8")
+        self.assertIn('<fieldset class="field-wide components-field">', app_js)
+        self.assertNotIn('<fieldset class="field field-wide components-field">', app_js)
+        self.assertNotIn('<fieldset class="field components-field">', app_js)
+
     def test_backend_sets_browser_security_policy(self):
         app_source = (ROOT / "server" / "app.py").read_text(encoding="utf-8")
         for header in (

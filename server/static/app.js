@@ -40,8 +40,7 @@
 
   const dom = {
     main: document.querySelector("#main-content"),
-    pageTitle: document.querySelector("#page-title"),
-    pageEyebrow: document.querySelector("#page-eyebrow"),
+    breadcrumb: document.querySelector("#breadcrumb"),
     serverNav: document.querySelector("#server-nav"),
     serverCount: document.querySelector("#server-count"),
     syncLabel: document.querySelector("#sync-label"),
@@ -61,6 +60,34 @@
     confirmMessage: document.querySelector("#confirm-message"),
     confirmSubmit: document.querySelector("#confirm-submit"),
     toastRegion: document.querySelector("#toast-region"),
+  };
+
+  // Minimal Feather-style line-icon set (MIT-licensed shapes, hand-authored
+  // inline so the UI never depends on an icon font or external sprite).
+  const ICON_PATHS = {
+    home: '<path d="M3 11.2 12 4l9 7.2"></path><path d="M5.5 9.6V20h13V9.6"></path><path d="M9.5 20v-6h5v6"></path>',
+    chevronRight: '<polyline points="9 18 15 12 9 6"></polyline>',
+    chevronLeft: '<polyline points="15 18 9 12 15 6"></polyline>',
+    helpCircle: '<circle cx="12" cy="12" r="9.5"></circle><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"></path><line x1="12" y1="17" x2="12.01" y2="17"></line>',
+    search: '<circle cx="11" cy="11" r="7.5"></circle><line x1="21" y1="21" x2="16.2" y2="16.2"></line>',
+    more: '<circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"></circle><circle cx="19" cy="12" r="1.6" fill="currentColor" stroke="none"></circle><circle cx="5" cy="12" r="1.6" fill="currentColor" stroke="none"></circle>',
+    plus: '<line x1="12" y1="5" x2="12" y2="19"></line><line x1="5" y1="12" x2="19" y2="12"></line>',
+    trash: '<polyline points="3 6 5 6 21 6"></polyline><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path><line x1="10" y1="11" x2="10" y2="17"></line><line x1="14" y1="11" x2="14" y2="17"></line>',
+    terminal: '<polyline points="4 17 10 11 4 5"></polyline><line x1="12" y1="19" x2="20" y2="19"></line>',
+    x: '<line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line>',
+    checkCircle: '<path d="M22 11.1V12a10 10 0 1 1-5.9-9.1"></path><polyline points="22 4 12 14.01 9 11.01"></polyline>',
+    alertTriangle: '<path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"></path><line x1="12" y1="9" x2="12" y2="13"></line><line x1="12" y1="17" x2="12.01" y2="17"></line>',
+    clock: '<circle cx="12" cy="12" r="9.5"></circle><polyline points="12 6.5 12 12 16 14"></polyline>',
+    server: '<rect x="2.5" y="3" width="19" height="7.5" rx="2"></rect><rect x="2.5" y="13.5" width="19" height="7.5" rx="2"></rect><line x1="6.5" y1="6.75" x2="6.51" y2="6.75"></line><line x1="6.5" y1="17.25" x2="6.51" y2="17.25"></line>',
+    box: '<path d="M21 8.5v7L12 20 3 15.5v-7L12 4z"></path><path d="M3 8.5 12 13l9-4.5"></path><line x1="12" y1="13" x2="12" y2="20"></line>',
+    copy: '<rect x="9" y="9" width="12.5" height="12.5" rx="2"></rect><path d="M5 15H4.5a2 2 0 0 1-2-2V4.5a2 2 0 0 1 2-2H13a2 2 0 0 1 2 2V5"></path>',
+    lock: '<rect x="3" y="11" width="18" height="10" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path>',
+  };
+
+  const icon = (name, extraClass = "") => {
+    const body = ICON_PATHS[name];
+    if (!body) return "";
+    return `<svg class="icon${extraClass ? ` ${extraClass}` : ""}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${body}</svg>`;
   };
 
   class ApiError extends Error {
@@ -171,9 +198,13 @@
   const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
   function setPageMeta(title, eyebrow) {
-    dom.pageTitle.textContent = title;
-    dom.pageEyebrow.textContent = eyebrow;
     document.title = `${title} · Backup Control`;
+    dom.breadcrumb.innerHTML = `
+      <a class="breadcrumb-home" href="#/overview" aria-label="Zur Übersicht">${icon("home")}</a>
+      ${icon("chevronRight", "breadcrumb-sep")}
+      <span class="breadcrumb-section">${escapeHtml(eyebrow)}</span>
+      ${icon("chevronRight", "breadcrumb-sep")}
+      <span class="breadcrumb-current" aria-current="page">${escapeHtml(title)}</span>`;
   }
 
   function initializeTheme() {
@@ -466,8 +497,8 @@
     dom.main.innerHTML = `
       <div class="error-state">
         <div>
-          <span class="error-state-icon" aria-hidden="true">!</span>
-          <h2>Collector nicht erreichbar</h2>
+          <span class="error-state-icon" aria-hidden="true">${icon("alertTriangle")}</span>
+          <h1>Collector nicht erreichbar</h1>
           <p>${escapeHtml(message)}</p>
           <button class="button button-primary" type="button" data-action="refresh">Erneut versuchen</button>
         </div>
@@ -522,13 +553,56 @@
     }
   }
 
-  function metricCard(label, value, detail, tone = "", valueTone = "") {
+  function metricCard(label, value, detail, tone = "", valueTone = "", extra = "") {
     return `
       <article class="metric-card ${tone}">
         <div class="metric-label">${escapeHtml(label)}</div>
         <p class="metric-value ${valueTone}">${escapeHtml(value)}</p>
         <p class="metric-detail">${escapeHtml(detail)}</p>
+        ${extra}
       </article>`;
+  }
+
+  function proportionalCells(counts, segments) {
+    const total = counts.reduce((sum, value) => sum + value, 0);
+    if (total <= 0) return counts.map(() => 0);
+    const raw = counts.map((value) => (value / total) * segments);
+    const base = raw.map(Math.floor);
+    const remainder = segments - base.reduce((sum, value) => sum + value, 0);
+    const order = raw
+      .map((value, index) => ({ index, frac: value - Math.floor(value) }))
+      .sort((a, b) => b.frac - a.frac);
+    for (let i = 0; i < remainder; i += 1) base[order[i % order.length].index] += 1;
+    return base;
+  }
+
+  function renderHealthBar(summary) {
+    const segments = 24;
+    const total = asNumber(summary.servers);
+    const ok = asNumber(summary.ok);
+    const error = asNumber(summary.error);
+    const stale = asNumber(summary.stale);
+    const cellClasses = total > 0
+      ? (() => {
+          const [okCells, errorCells, staleCells] = proportionalCells([ok, error, stale], segments);
+          return [
+            ...Array(okCells).fill("is-ok"),
+            ...Array(errorCells).fill("is-error"),
+            ...Array(staleCells).fill("is-stale"),
+          ];
+        })()
+      : [];
+    while (cellClasses.length < segments) cellClasses.push("is-empty");
+    const label = total > 0 ? `${ok} von ${total} Servern gesund` : "Keine Server verbunden";
+    return `
+      <div class="health-bar" role="img" aria-label="${escapeHtml(label)}">
+        ${cellClasses.slice(0, segments).map((cls) => `<span class="health-cell ${cls}"></span>`).join("")}
+      </div>
+      <div class="health-bar-legend">
+        <span class="health-legend-item"><i class="health-dot is-ok"></i>${ok} gesund</span>
+        <span class="health-legend-item"><i class="health-dot is-error"></i>${error} Fehler</span>
+        <span class="health-legend-item"><i class="health-dot is-stale"></i>${stale} überfällig</span>
+      </div>`;
   }
 
   function renderOverview() {
@@ -543,7 +617,7 @@
     dom.main.innerHTML = `
       <section class="page-heading">
         <div>
-          <h2>Fleet Operations</h2>
+          <h1>Fleet Operations</h1>
           <p>Backup-Zustand, Kapazität und Laufzeiten Ihrer Mailcow-Infrastruktur auf einen Blick.</p>
         </div>
         <div class="page-heading-actions">
@@ -553,18 +627,18 @@
 
       ${!state.online ? `
         <div class="banner is-warning" role="alert">
-          <span aria-hidden="true">!</span>
+          <span class="banner-icon" aria-hidden="true">${icon("alertTriangle")}</span>
           <span><strong>Live-Verbindung unterbrochen</strong><small>Es werden die zuletzt geladenen Daten angezeigt.</small></span>
         </div>` : ""}
 
       <section class="metrics" aria-label="Fleet-Kennzahlen">
-        ${metricCard("Fleet-Status", fleetStatus.value, fleetStatus.detail, fleetStatus.tone, fleetStatus.valueTone)}
+        ${metricCard("Fleet-Status", fleetStatus.value, fleetStatus.detail, `${fleetStatus.tone} metric-card-wide`, fleetStatus.valueTone, renderHealthBar(summary))}
         ${metricCard("Server", String(asNumber(summary.servers)), "Aktiv angebunden")}
         ${metricCard("Speicher", formatGb(summary.repo_total_gb), "Alle Borg-Repositories")}
         ${metricCard("Läufe · 24 h", String(asNumber(summary.runs_24h)), "Empfangene Reports")}
         ${metricCard("Fehler · 7 Tage", String(asNumber(summary.fails_7d)), "Fehlgeschlagene Läufe", asNumber(summary.fails_7d) ? "is-danger" : "", asNumber(summary.fails_7d) ? "is-danger" : "")}
-        ${metricCard("Verify-Fehler · 30 T", String(asNumber(summary.verify_fails_30d)), "Fehlgeschlagene Restore-Tests", asNumber(summary.verify_fails_30d) ? "is-warning" : "", asNumber(summary.verify_fails_30d) ? "is-warning" : "")}
-        ${metricCard("Watchdog-Fehler · 24 h", String(asNumber(summary.watchdog_fails_24h)), "Health-Check-Warnungen", asNumber(summary.watchdog_fails_24h) ? "is-warning" : "", asNumber(summary.watchdog_fails_24h) ? "is-warning" : "")}
+        ${metricCard("Verify · 30 Tage", String(asNumber(summary.verify_fails_30d)), "Fehlgeschlagene Restore-Tests", asNumber(summary.verify_fails_30d) ? "is-warning" : "", asNumber(summary.verify_fails_30d) ? "is-warning" : "")}
+        ${metricCard("Watchdog · 24 Std.", String(asNumber(summary.watchdog_fails_24h)), "Health-Check-Warnungen", asNumber(summary.watchdog_fails_24h) ? "is-warning" : "", asNumber(summary.watchdog_fails_24h) ? "is-warning" : "")}
       </section>
 
       <section class="panel" aria-labelledby="fleet-title">
@@ -576,18 +650,18 @@
         </div>
         <div class="fleet-toolbar">
           <label class="search-field">
-            <span aria-hidden="true">⌕</span>
+            ${icon("search")}
             <span class="sr-only">Server suchen</span>
             <input id="fleet-search" type="search" placeholder="Server suchen …" value="${escapeHtml(state.search)}" autocomplete="off">
           </label>
-          <div class="filter-group" aria-label="Nach Status filtern">
+          <div class="chip-group" aria-label="Nach Status filtern">
             ${[
               ["all", "Alle"],
               ["ok", "Gesund"],
               ["error", "Fehler"],
               ["stale", "Überfällig"],
             ].map(([value, label]) => `
-              <button class="filter-button" type="button" data-action="filter-status" data-status="${value}"
+              <button class="chip" type="button" data-action="filter-status" data-status="${value}"
                       aria-pressed="${state.statusFilter === value}">${label}</button>`).join("")}
           </div>
           <span class="result-count" id="result-count"></span>
@@ -620,7 +694,7 @@
       container.innerHTML = `
         <div class="empty-state">
           <div>
-            <span class="empty-state-icon" aria-hidden="true">＋</span>
+            <span class="empty-state-icon" aria-hidden="true">${icon("server")}</span>
             <h3>Noch keine Server angebunden</h3>
             <p>Richten Sie den ersten Mailcow-Server als Peer ein. Nach dem ersten Report erscheint er automatisch hier.</p>
             <a class="button button-primary" href="#/peers">Ersten Peer einrichten</a>
@@ -633,7 +707,7 @@
       container.innerHTML = `
         <div class="empty-state empty-state-compact">
           <div>
-            <span class="empty-state-icon" aria-hidden="true">⌕</span>
+            <span class="empty-state-icon" aria-hidden="true">${icon("search")}</span>
             <h3>Keine Treffer</h3>
             <p>Passen Sie Suche oder Statusfilter an.</p>
           </div>
@@ -679,7 +753,7 @@
                   <td class="mono">${escapeHtml(formatGb(latest.repo_gb))}</td>
                   <td class="mono hide-mobile">${latest.archives ?? "–"}</td>
                   <td class="hide-mobile"><canvas class="sparkline" id="spark-${index}" width="110" height="30" aria-label="Repository-Trend"></canvas></td>
-                  <td><a class="row-action" href="#/server/${encodeURIComponent(server.server)}" aria-label="${escapeHtml(server.server)} öffnen">›</a></td>
+                  <td><a class="row-action" href="#/server/${encodeURIComponent(server.server)}" aria-label="${escapeHtml(server.server)} öffnen">${icon("chevronRight")}</a></td>
                 </tr>`;
             }).join("")}
           </tbody>
@@ -719,8 +793,8 @@
       dom.main.innerHTML = `
         <div class="error-state">
           <div>
-            <span class="error-state-icon" aria-hidden="true">?</span>
-            <h2>Server nicht gefunden</h2>
+            <span class="error-state-icon" aria-hidden="true">${icon("helpCircle")}</span>
+            <h1>Server nicht gefunden</h1>
             <p>Der Server ist nicht mehr in der aktuellen Fleet-Liste enthalten.</p>
             <a class="button button-primary" href="#/overview">Zur Übersicht</a>
           </div>
@@ -737,17 +811,17 @@
     dom.main.innerHTML = `
       <section class="page-heading">
         <div>
-          <h2>${escapeHtml(server.server)}</h2>
+          <h1>${escapeHtml(server.server)}</h1>
           <p>Backup-Verlauf und Betriebsmetriken dieses Mailcow-Servers.</p>
         </div>
         <div class="page-heading-actions">
-          <a class="button button-secondary" href="#/overview">← Zur Übersicht</a>
+          <a class="button button-secondary" href="#/overview">${icon("chevronLeft")}<span>Zur Übersicht</span></a>
         </div>
       </section>
 
       ${server.state !== "ok" ? `
         <div class="banner ${server.state === "error" ? "is-danger" : "is-warning"}" role="alert">
-          <span aria-hidden="true">!</span>
+          <span class="banner-icon" aria-hidden="true">${icon("alertTriangle")}</span>
           <span>
             <strong>${server.state === "error" ? "Letzter Backup-Lauf fehlgeschlagen" : "Kein aktueller Backup-Report"}</strong>
             <small>${server.state === "error" ? "Prüfen Sie Fehlerhistorie und Agent-Log." : `Letzter Report ${formatAgo(latest.ts)}.`}</small>
@@ -803,7 +877,7 @@
               </li>`).join("")}
           </ul>` : `
           <div class="empty-state empty-state-compact">
-            <div><span class="empty-state-icon" aria-hidden="true">✓</span><h3>Keine Fehler aufgezeichnet</h3><p>Für diesen Server liegen keine Fehlermeldungen vor.</p></div>
+            <div><span class="empty-state-icon" aria-hidden="true">${icon("checkCircle")}</span><h3>Keine Fehler aufgezeichnet</h3><p>Für diesen Server liegen keine Fehlermeldungen vor.</p></div>
           </div>`}
       </section>
 
@@ -937,7 +1011,7 @@
     dom.main.innerHTML = `
       <section class="page-heading">
         <div>
-          <h2>Server-Onboarding</h2>
+          <h1>Server-Onboarding</h1>
           <p>Neue Mailcow-Systeme kontrolliert registrieren und bestehende Enrollment-Einträge verwalten.</p>
         </div>
       </section>
@@ -980,7 +1054,7 @@
                 <span>Mailcow-Verzeichnis</span>
                 <input name="mailcow_dir" value="/opt/mailcow-dockerized" required>
               </label>
-              <fieldset class="field field-wide components-field">
+              <fieldset class="field-wide components-field">
                 <legend>Backup-Komponenten</legend>
                 <label class="check-field">
                   <input type="checkbox" id="component-all-toggle" name="component_all" checked>
@@ -1026,7 +1100,7 @@
     if (!peers.length) {
       return `
         <div class="empty-state empty-state-compact">
-          <div><span class="empty-state-icon" aria-hidden="true">＋</span><h3>Noch keine Peers</h3><p>Neue Enrollment-Einträge erscheinen hier.</p></div>
+          <div><span class="empty-state-icon" aria-hidden="true">${icon("plus")}</span><h3>Noch keine Peers</h3><p>Neue Enrollment-Einträge erscheinen hier.</p></div>
         </div>`;
     }
     return `
@@ -1043,12 +1117,18 @@
                 <td><span class="status-badge ${peer.enrolled_ts ? "is-ok" : "is-stale"}">${peer.enrolled_ts ? "Abgerufen" : "Ausstehend"}</span></td>
                 <td class="mono repo-cell hide-mobile" title="${escapeHtml(peer.config?.borg_repo || "")}">${escapeHtml(peer.config?.borg_repo || "–")}</td>
                 <td>
-                  <div class="table-actions">
-                    ${peer.enrolled_ts ? "" : `
-                      <button class="button button-secondary button-small" type="button" data-action="show-enroll"
-                              data-key="${encodeData(peer.enroll_key)}">Befehl</button>`}
-                    <button class="button button-danger-subtle button-small" type="button" data-action="delete-peer"
-                            data-peer="${encodeData(peer.name)}">Löschen</button>
+                  <div class="row-menu">
+                    <button class="icon-button icon-button-ghost" type="button" data-action="toggle-menu"
+                            aria-haspopup="true" aria-expanded="false" aria-label="Aktionen für ${escapeHtml(peer.name)}">
+                      ${icon("more")}
+                    </button>
+                    <div class="row-menu-list" role="menu">
+                      ${peer.enrolled_ts ? "" : `
+                        <button class="row-menu-item" type="button" role="menuitem" data-action="show-enroll"
+                                data-key="${encodeData(peer.enroll_key)}">${icon("terminal")}<span>Enrollment-Befehl</span></button>`}
+                      <button class="row-menu-item is-danger" type="button" role="menuitem" data-action="delete-peer"
+                              data-peer="${encodeData(peer.name)}">${icon("trash")}<span>Peer löschen</span></button>
+                    </div>
                   </div>
                 </td>
               </tr>`).join("")}
@@ -1066,7 +1146,7 @@
         <p>Auf dem neuen Mailcow-Server als root ausführen. Der Schlüssel sollte vertraulich behandelt werden.</p>
         <div class="command-row">
           <code id="enrollment-command"></code>
-          <button class="button button-secondary" type="button" data-action="copy-command">Kopieren</button>
+          <button class="button button-secondary" type="button" data-action="copy-command">${icon("copy")}<span>Kopieren</span></button>
         </div>
       </div>`;
     document.querySelector("#enrollment-command").textContent = command;
@@ -1160,7 +1240,7 @@
     dom.main.innerHTML = `
       <section class="page-heading">
         <div>
-          <h2>System & Updates</h2>
+          <h1>System &amp; Updates</h1>
           <p>Softwarestand, Update-Protokoll und lokale Admin-Sitzung verwalten.</p>
         </div>
         <div class="page-heading-actions">
@@ -1310,8 +1390,8 @@
     dom.main.innerHTML = `
       <div class="error-state">
         <div>
-          <span class="error-state-icon" aria-hidden="true">!</span>
-          <h2>${escapeHtml(title)}</h2>
+          <span class="error-state-icon" aria-hidden="true">${icon("alertTriangle")}</span>
+          <h1>${escapeHtml(title)}</h1>
           <p>${escapeHtml(message)}</p>
           <button class="button button-primary" type="button" data-action="${section === "peers" ? "refresh-peers" : "refresh-settings"}">Erneut versuchen</button>
         </div>
@@ -1342,9 +1422,28 @@
     }
   }
 
+  function closeAllRowMenus(exceptMenu = null) {
+    document.querySelectorAll(".row-menu.is-open").forEach((menu) => {
+      if (menu === exceptMenu) return;
+      menu.classList.remove("is-open");
+      menu.querySelector('[data-action="toggle-menu"]')?.setAttribute("aria-expanded", "false");
+    });
+  }
+
   async function handleAction(button) {
     const action = button.dataset.action;
+    if (action !== "toggle-menu") closeAllRowMenus();
     switch (action) {
+      case "toggle-menu": {
+        const menu = button.closest(".row-menu");
+        const wasOpen = menu.classList.contains("is-open");
+        closeAllRowMenus();
+        if (!wasOpen) {
+          menu.classList.add("is-open");
+          button.setAttribute("aria-expanded", "true");
+        }
+        break;
+      }
       case "open-menu":
         document.body.classList.add("menu-open");
         button.setAttribute("aria-expanded", "true");
@@ -1417,7 +1516,10 @@
 
     document.addEventListener("click", (event) => {
       const action = event.target.closest("[data-action]");
-      if (!action) return;
+      if (!action) {
+        if (!event.target.closest(".row-menu")) closeAllRowMenus();
+        return;
+      }
       event.preventDefault();
       handleAction(action);
     });
@@ -1452,7 +1554,10 @@
     });
 
     document.addEventListener("keydown", (event) => {
-      if (event.key === "Escape") closeMobileMenu();
+      if (event.key === "Escape") {
+        closeMobileMenu();
+        closeAllRowMenus();
+      }
     });
   }
 
