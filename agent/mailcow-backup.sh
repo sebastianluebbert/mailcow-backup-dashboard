@@ -46,6 +46,22 @@ trap on_exit EXIT
 exec >>"$LOG" 2>&1
 echo "=== Backup-Start: $(date) ==="
 
+# ── Selbst-Update: neueste Agent-Version vom Dashboard holen ────────────────
+: "${SELF_UPDATE:=1}"
+if [ "$SELF_UPDATE" = 1 ] && [ -n "$DASH_URL" ] && [ "${MAILCOW_AGENT_UPDATED:-0}" != 1 ]; then
+  NEW=$(mktemp)
+  if curl -fsS -m 30 "$DASH_URL/agent/script" -o "$NEW" 2>/dev/null \
+     && bash -n "$NEW" 2>/dev/null && grep -q "Mailcow Backup Agent" "$NEW"; then
+    if ! cmp -s "$NEW" "$0"; then
+      echo "Selbst-Update: neue Agent-Version vom Dashboard uebernommen."
+      install -m 700 "$NEW" "$0"
+      rm -f "$NEW"
+      MAILCOW_AGENT_UPDATED=1 exec "$0" "$@"
+    fi
+  fi
+  rm -f "$NEW"
+fi
+
 export BORG_PASSPHRASE; BORG_PASSPHRASE=$(cat "$BORG_PASSPHRASE_FILE")
 export BORG_RSH="ssh -p$BORG_SSH_PORT"
 export MAILCOW_BACKUP_LOCATION="$BACKUP_LOCATION"

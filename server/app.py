@@ -299,6 +299,15 @@ echo "✔ Enrollment abgeschlossen — Cron: täglich {cfg["hour"]}:00 Uhr"
 """
 
 
+@app.get("/agent/script", response_class=PlainTextResponse)
+async def agent_script():
+    """Latest agent script — used by agents for self-updates."""
+    try:
+        return open(AGENT_SCRIPT).read()
+    except OSError:
+        raise HTTPException(500, "agent script missing on server")
+
+
 @app.get("/")
 async def index():
     return FileResponse(os.path.join(BASE, "static", "index.html"))
