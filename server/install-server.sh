@@ -23,9 +23,14 @@ mkdir -p "$APP/static"
 install -m 644 "$SCRIPT_DIR/static/index.html" "$APP/static/index.html"
 install -m 644 "$SCRIPT_DIR/static/styles.css" "$APP/static/styles.css"
 install -m 644 "$SCRIPT_DIR/static/app.js" "$APP/static/app.js"
-# Agent-Skript fürs Enrollment mitliefern
-if [ -f "$SCRIPT_DIR/../agent/mailcow-backup.sh" ]; then
-  cp "$SCRIPT_DIR/../agent/mailcow-backup.sh" "$APP/agent/"
+# Agent-Suite fürs Enrollment und die Self-Update-Endpunkte mitliefern
+AGENT_SRC="$SCRIPT_DIR/../agent"
+if [ -d "$AGENT_SRC" ]; then
+  mkdir -p "$APP/agent/lib"
+  for f in mailcow-backup.sh mailcow-verify.sh mailcow-watchdog.sh; do
+    [ -f "$AGENT_SRC/$f" ] && install -m 644 "$AGENT_SRC/$f" "$APP/agent/$f"
+  done
+  [ -f "$AGENT_SRC/lib/common.sh" ] && install -m 644 "$AGENT_SRC/lib/common.sh" "$APP/agent/lib/common.sh"
 fi
 
 echo "→ Python-Umgebung…"

@@ -42,8 +42,11 @@ install -m 644 server/requirements.txt   "$APP/requirements.txt"
 install -m 644 server/static/index.html "$APP/static/index.html"
 install -m 644 server/static/styles.css "$APP/static/styles.css"
 install -m 644 server/static/app.js     "$APP/static/app.js"
-mkdir -p "$APP/agent"
-install -m 644 agent/mailcow-backup.sh  "$APP/agent/mailcow-backup.sh"
+mkdir -p "$APP/agent/lib"
+install -m 644 agent/mailcow-backup.sh   "$APP/agent/mailcow-backup.sh"
+install -m 644 agent/mailcow-verify.sh   "$APP/agent/mailcow-verify.sh"
+install -m 644 agent/mailcow-watchdog.sh "$APP/agent/mailcow-watchdog.sh"
+install -m 644 agent/lib/common.sh       "$APP/agent/lib/common.sh"
 
 # Der UI-Updater muss auch bei abweichendem Clone-Pfad das Repository finden.
 mkdir -p /etc/systemd/system/backupdash.service.d
@@ -62,7 +65,15 @@ else
   git reset -q --hard "$BEFORE"
   install -m 644 server/app.py            "$APP/app.py"
   install -m 644 server/static/index.html "$APP/static/index.html"
-  install -m 644 agent/mailcow-backup.sh  "$APP/agent/mailcow-backup.sh"
+  mkdir -p "$APP/agent/lib"
+  install -m 644 agent/mailcow-backup.sh   "$APP/agent/mailcow-backup.sh"
+  if [ -f agent/mailcow-verify.sh ]; then
+    install -m 644 agent/mailcow-verify.sh   "$APP/agent/mailcow-verify.sh"
+    install -m 644 agent/mailcow-watchdog.sh "$APP/agent/mailcow-watchdog.sh"
+    install -m 644 agent/lib/common.sh       "$APP/agent/lib/common.sh"
+  else
+    rm -f "$APP/agent/mailcow-verify.sh" "$APP/agent/mailcow-watchdog.sh" "$APP/agent/lib/common.sh"
+  fi
   if [ -f server/static/styles.css ]; then
     install -m 644 server/static/styles.css "$APP/static/styles.css"
     install -m 644 server/static/app.js     "$APP/static/app.js"
