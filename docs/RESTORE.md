@@ -1,0 +1,77 @@
+# Wiederherstellung (Restore)
+
+> **Vorab:** Du brauchst die Borg-**Passphrase** (`/root/.borg-passphrase`) —
+> bei Total­verlust des Servers die extern gesicherte Kopie + Key-Export.
+
+## Szenario A: Einzelne Daten zurückholen (Server läuft noch)
+
+```bash
+export BORG_PASSPHRASE=$(cat /root/.borg-passphrase)
+export BORG_RSH="ssh -p23"
+REPO="u639828@u639828.your-storagebox.de:backups/mailcow-borg"
+
+# Verfügbare Stände anzeigen
+borg list "$REPO"
+
+# Stand in Temp-Verzeichnis extrahieren
+mkdir -p /tmp/restore && cd /tmp/restore
+borg extract "$REPO::mailcow-2026-07-25"
+
+# Danach mit dem mailcow-Restore-Skript einspielen:
+export MAILCOW_BACKUP_LOCATION=/tmp/restore/opt/mailcow-backups
+/opt/mailcow-dockerized/helper-scripts/backup_and_restore.sh restore
+# → interaktiv Komponenten wählen (vmail, mysql, redis, …)
+```
+
+## Szenario B: Kompletter Server-Neuaufbau (Disaster Recovery)
+
+1. **Neuen Server** mit Debian + Docker + docker compose aufsetzen
+2. **mailcow klonen** (gleiche Version wie zuvor empfohlen):
+   ```bash
+   git clone https://github.com/mailcow/mailcow-dockerized /opt/mailcow-dockerized
+   ```
+3. **Borg installieren & Zugang wiederherstellen:**
+   ```bash
+   apt-get install -y borgbackup
+   # Passphrase aus externem Backup wieder ablegen:
+   echo '<PASSPHRASE>' > /root/.borg-passphrase && chmod 600 /root/.borg-passphrase
+   # SSH-Key fürs Ziel wieder einrichten/hinterlegen
+   ```
+4. **Backup extrahieren:**
+   ```bash
+   export BORG_PASSPHRASE=$(cat /root/.borg-passphrase)
+   export BORG_RSH="ssh -p23"
+   borg list "u…:backups/mailcow-borg"                # Stand wählen
+   mkdir -p /restore && cd /restore
+   borg extract "u…:backups/mailcow-borg::mailcow-2026-07-25"
+   ```
+5. **mailcow.conf zurückspielen** (liegt im Backup) und Stack einmal starten:
+   ```bash
+   cp /restore/opt/mailcow-backups/mailcow-*/mailcow.conf /opt/mailcow-dockerized/
+   cd /opt/mailcow-dockerized && docker compose pull && docker compose up -d
+   ```
+6. **Restore ausführen:**
+   ```bash
+   export MAILCOW_BACKUP_LOCATION=/restore/opt/mailcow-backups
+   /opt/mailcow-dockerized/helper-scripts/backup_and_restore.sh restore
+   # → "all" wählen
+   ```
+7. DNS/Firewall prüfen (MX, PTR, Ports 25/443/465/587/993), Mailflow testen.
+
+## Szenario C: Nur eine Mailbox
+
+```bash
+# Stand extrahieren (wie A), dann gezielt das Maildir kopieren:
+cp -a /tmp/restore/.../vmail/<domain>/<user>/Maildir \
+      /var/lib/docker/volumes/mailcowdockerized_vmail-vol-1/_data/<domain>/<user>/
+# Rechte: vmail hat UID/GID 5000
+chown -R 5000:5000 /var/lib/docker/volumes/mailcowdockerized_vmail-vol-1/_data/<domain>/<user>
+# Dovecot neu indizieren:
+cd /opt/mailcow-dockerized
+docker compose exec dovecot-mailcow doveadm force-resync -u <user>@<domain> '*'
+```
+
+## Restore-Test (empfohlen: quartalsweise)
+
+Mindestens `borg list` + Probe-Extraktion einer kleinen Datei — nur ein
+getestetes Backup ist ein Backup.
