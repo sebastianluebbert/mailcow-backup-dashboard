@@ -15,10 +15,14 @@ echo "→ Pakete…"
 apt-get update -qq && apt-get install -y -qq python3-venv curl >/dev/null
 
 echo "→ Dateien nach $APP…"
-mkdir -p "$APP/data"
+mkdir -p "$APP/data" "$APP/agent"
 cp "$SCRIPT_DIR/app.py" "$APP/"
 mkdir -p "$APP/static"
 cp "$SCRIPT_DIR/static/index.html" "$APP/static/"
+# Agent-Skript fürs Enrollment mitliefern
+if [ -f "$SCRIPT_DIR/../agent/mailcow-backup.sh" ]; then
+  cp "$SCRIPT_DIR/../agent/mailcow-backup.sh" "$APP/agent/"
+fi
 
 echo "→ Python-Umgebung…"
 python3 -m venv "$APP/venv"

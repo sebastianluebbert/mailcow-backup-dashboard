@@ -99,6 +99,8 @@ footer{margin-top:auto;padding:16px 28px;color:var(--mut2);font-size:11px;border
   <nav id="nav">
     <div class="cap">Monitoring</div>
     <a data-view="fleet" class="active">▦&nbsp; Übersicht</a>
+    <div class="cap">Verwaltung</div>
+    <a data-view="peers" onclick="go('peers')">⊕&nbsp; Peers</a>
     <div class="cap">Server</div>
     <div id="navServers"></div>
   </nav>
@@ -151,7 +153,93 @@ function go(v){VIEW=v;render();renderNav()}
 
 function render(){
   killCharts();
-  if(VIEW==='fleet')renderFleet();else renderDetail(DATA.find(s=>s.server===VIEW)||DATA[0]);
+  if(VIEW==='fleet')renderFleet();
+  else if(VIEW==='peers')renderPeers();
+  else renderDetail(DATA.find(s=>s.server===VIEW)||DATA[0]);
+}
+
+/* ── Peers view (NetBird-Style Onboarding) ── */
+function tokenPrompt(){
+  if(!localStorage.dashToken){
+    const t=prompt('Admin-Token (Inhalt von /etc/backupdash.token):');
+    if(t)localStorage.dashToken=t.trim();
+  }
+  return localStorage.dashToken;
+}
+async function api(path,opts={}){
+  const tok=tokenPrompt();if(!tok)throw new Error('kein Token');
+  opts.headers=Object.assign({'Authorization':'Bearer '+tok,'Content-Type':'application/json'},opts.headers||{});
+  const r=await fetch(path,opts);
+  if(r.status===401){localStorage.removeItem('dashToken');throw new Error('Token ungültig')}
+  if(!r.ok)throw new Error((await r.json()).detail||r.status);
+  return r.json();
+}
+async function renderPeers(){
+  $('#title').textContent='Peers';$('#crumb').textContent='Server-Onboarding & Verwaltung';
+  let peers=[];let err='';
+  try{peers=await api('/api/peers')}catch(e){err=e.message}
+  $('#content').innerHTML=`
+  ${err?`<div class="panel"><div class="empty">⚠ ${err} — <a class="back" onclick="localStorage.removeItem('dashToken');renderPeers()">Token neu eingeben</a></div></div>`:''}
+  <div class="grid2">
+    <div class="panel"><div class="ph"><h2>Neuen Peer anlegen</h2><span class="sub">erzeugt Enrollment-Befehl</span></div>
+      <div style="padding:20px;display:grid;gap:12px">
+        <label class="fld">Name (Hostname)<input id="pName" placeholder="mail2.rexcloud.de"></label>
+        <label class="fld">Borg-Ziel<input id="pRepo" placeholder="u123456@u123456.your-storagebox.de:backups/mail2-borg"></label>
+        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
+          <label class="fld">SSH-Port<input id="pPort" value="23" type="number"></label>
+          <label class="fld">Aufbewahrung (Tage)<input id="pKeep" value="7" type="number"></label>
+          <label class="fld">Uhrzeit (Std)<input id="pHour" value="3" type="number" min="0" max="23"></label>
+        </div>
+        <label class="fld">mailcow-Verzeichnis<input id="pDir" value="/opt/mailcow-dockerized"></label>
+        <button class="btn" style="justify-self:start;border-color:var(--acc);color:var(--acc)" onclick="createPeer()">⊕ Peer anlegen</button>
+        <div id="enrollOut"></div>
+      </div>
+    </div>
+    <div class="panel"><div class="ph"><h2>Registrierte Peers</h2><span class="sub">${peers.length}</span></div>
+      ${peers.length?`<table><thead><tr><th>Name</th><th>Angelegt</th><th>Enrolled</th><th>Ziel</th><th></th></tr></thead><tbody>
+      ${peers.map(p=>`<tr>
+        <td><b>${p.name}</b></td>
+        <td class="mono">${fmtTs(p.created_ts)}</td>
+        <td>${p.enrolled_ts?'<span class="badge ok">Ja</span>':'<span class="badge stale">Ausstehend</span>'}</td>
+        <td class="mono" style="font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.config.borg_repo}</td>
+        <td style="text-align:right">
+          <button class="btn" style="padding:4px 9px;font-size:11px" onclick="showEnroll('${p.enroll_key}','${p.name}')">Befehl</button>
+          <button class="btn" style="padding:4px 9px;font-size:11px;color:var(--err)" onclick="delPeer('${p.name}')">✕</button>
+        </td></tr>`).join('')}</tbody></table>`:'<div class="empty">Noch keine Peers angelegt.</div>'}
+    </div>
+  </div>
+  <style>
+    .fld{display:grid;gap:5px;font-size:11.5px;color:var(--mut)}
+    .fld input{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--txt);font-size:13px;font-family:var(--mono)}
+    .fld input:focus{outline:none;border-color:var(--acc)}
+    .cmdbox{background:var(--surface2);border:1px solid var(--acc);border-radius:10px;padding:14px;margin-top:6px}
+    .cmdbox .cl{font-size:11px;color:var(--mut);margin-bottom:8px}
+    .cmdbox code{display:block;font-family:var(--mono);font-size:12px;word-break:break-all;color:var(--acc);cursor:pointer}
+    .cmdbox .hint{font-size:11px;color:var(--mut);margin-top:8px}
+  </style>`;
+}
+function enrollHtml(cmd){
+  return `<div class="cmdbox"><div class="cl">Auf dem Mailcow-Server als root ausführen (Klick = kopieren):</div>
+  <code onclick="navigator.clipboard.writeText(this.textContent);this.style.color='var(--ok)'">${cmd}</code>
+  <div class="hint">Der Befehl installiert Borg, schreibt Konfig + Agent + Cron. Danach: SSH-Key am Ziel hinterlegen, Repo initialisieren, Testlauf (Anweisungen erscheinen im Terminal).</div></div>`;
+}
+async function createPeer(){
+  try{
+    const body={name:$('#pName').value.trim(),borg_repo:$('#pRepo').value.trim(),
+      borg_ssh_port:+$('#pPort').value,keep_daily:+$('#pKeep').value,hour:+$('#pHour').value,
+      mailcow_dir:$('#pDir').value.trim()||'/opt/mailcow-dockerized'};
+    if(!body.name||!body.borg_repo){alert('Name und Borg-Ziel sind Pflicht');return}
+    const r=await api('/api/peers',{method:'POST',body:JSON.stringify(body)});
+    $('#enrollOut').innerHTML=enrollHtml(r.command);
+  }catch(e){alert('Fehler: '+e.message)}
+}
+function showEnroll(key,name){
+  const cmd=location.origin+'/enroll/'+key;
+  $('#enrollOut')?($('#enrollOut').innerHTML=enrollHtml('curl -fsSL '+cmd+' | bash')):alert(cmd);
+}
+async function delPeer(name){
+  if(!confirm('Peer "'+name+'" löschen? (Backups/Server bleiben unberührt — nur der Enrollment-Eintrag verschwindet)'))return;
+  try{await api('/api/peers/'+encodeURIComponent(name),{method:'DELETE'});renderPeers()}catch(e){alert('Fehler: '+e.message)}
 }
 
 /* ── Fleet view ── */

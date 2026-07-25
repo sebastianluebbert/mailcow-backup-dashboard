@@ -41,6 +41,19 @@ ssh -p23 uXXXXXX@uXXXXXX.your-storagebox.de install-ssh-key < /root/.ssh/id_ed25
 
 ## 3. Agent auf jedem Mailcow-Server
 
+### Weg A: Peer-Onboarding über das Dashboard (empfohlen, NetBird-Style)
+
+1. Im Dashboard → **Peers** → „Neuen Peer anlegen" (Name, Borg-Ziel, Aufbewahrung, Uhrzeit)
+   — beim ersten Aufruf wird der Admin-Token abgefragt (`/etc/backupdash.token`)
+2. Den erzeugten **Enrollment-Befehl** kopieren und auf dem Mailcow-Server als root ausführen:
+   ```bash
+   curl -fsSL http://<dashboard>:8080/enroll/<key> | bash
+   ```
+3. Das Skript installiert Borg, Konfig, Agent + Cron und zeigt die restlichen Schritte an
+   (SSH-Key am Ziel hinterlegen, `borg init`, Testlauf).
+
+### Weg B: Interaktiver Installer (ohne Dashboard-Zugriff)
+
 ```bash
 git clone https://github.com/sebastianluebbert/mailcow-backup-dashboard.git
 cd mailcow-backup-dashboard/agent
