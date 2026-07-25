@@ -60,19 +60,17 @@ Details: [docs/INSTALL.md](docs/INSTALL.md)
 
 ## Updates
 
-**Dashboard:** `update.sh` im Repo zieht `origin/main`, deployt Server-Dateien,
+**Dashboard:** manuell per `update.sh` — zieht `origin/main`, deployt Server-Dateien,
 startet den Dienst neu (mit automatischem Rollback bei Startfehler).
 
 ```bash
-cd /opt/mailcow-backup-dashboard && bash update.sh          # manuell
-# oder automatisch (täglich 4:00):
-echo "0 4 * * * root /opt/mailcow-backup-dashboard/update.sh" > /etc/cron.d/backupdash-update
+cd /opt/mailcow-backup-dashboard && bash update.sh
 ```
 
 **Agents:** aktualisieren sich **selbst** — vor jedem Backup-Lauf holt der Agent
 die neueste Version vom Dashboard (`/agent/script`), prüft Syntax und ersetzt
 sich bei Änderung (abschaltbar mit `SELF_UPDATE="0"` in `/etc/mailcow-backup.conf`).
-Es reicht also, das Dashboard aktuell zu halten — die Flotte folgt automatisch.
+Nach einem Dashboard-Update folgt die Flotte also automatisch beim nächsten Lauf.
 
 ## Sicherheit
 
