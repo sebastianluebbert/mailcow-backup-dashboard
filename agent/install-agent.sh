@@ -16,7 +16,7 @@ read -rp "SSH-Port des Ziels [23]: " BORG_SSH_PORT; BORG_SSH_PORT=${BORG_SSH_POR
 read -rp "Aufbewahrung in Tagen [7]: " KEEP_DAILY; KEEP_DAILY=${KEEP_DAILY:-7}
 read -rp "Dashboard-URL (leer = kein Reporting, z.B. http://<dashboard-ip>:8080): " DASH_URL
 DASH_TOKEN=""
-[ -n "$DASH_URL" ] && read -rp "Dashboard-Token: " DASH_TOKEN
+[ -n "$DASH_URL" ] && read -rp "Dashboard-Agent-Token: " DASH_TOKEN
 read -rp "Backup-Uhrzeit (Stunde 0-23) [3]: " HOUR; HOUR=${HOUR:-3}
 read -rp "mailcow-Verzeichnis [/opt/mailcow-dockerized]: " MAILCOW_DIR; MAILCOW_DIR=${MAILCOW_DIR:-/opt/mailcow-dockerized}
 

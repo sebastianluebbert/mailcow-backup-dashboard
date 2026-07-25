@@ -1,372 +1,145 @@
 <!doctype html>
 <html lang="de">
 <head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Backup Control — Mailcow Fleet</title>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
-<style>
-:root{
-  --bg:#0b0e14;--surface:#11151d;--surface2:#161b26;--border:#222937;
-  --txt:#dfe4ec;--mut:#7d8698;--mut2:#4d5567;
-  --ok:#22c55e;--err:#ef4444;--warn:#f59e0b;--acc:#3b82f6;--acc2:#8b5cf6;
-  --mono:'SF Mono',SFMono-Regular,ui-monospace,Menlo,monospace;
-}
-[data-theme="light"]{
-  --bg:#f4f6fa;--surface:#ffffff;--surface2:#eef1f6;--border:#dde3ec;
-  --txt:#1a2233;--mut:#5b6577;--mut2:#98a1b3;
-}
-*{box-sizing:border-box;margin:0;padding:0}
-html,body{height:100%}
-body{background:var(--bg);color:var(--txt);font:14px/1.5 Inter,system-ui,-apple-system,'Segoe UI',sans-serif;display:flex}
-
-/* ── Sidebar ─────────────────────── */
-aside{width:232px;background:var(--surface);border-right:1px solid var(--border);display:flex;flex-direction:column;flex-shrink:0;position:sticky;top:0;height:100vh}
-.brand{display:flex;align-items:center;gap:10px;padding:20px 18px;border-bottom:1px solid var(--border)}
-.brand .logo{width:32px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--acc),var(--acc2));display:grid;place-items:center;font-size:16px}
-.brand b{font-size:14.5px;letter-spacing:.2px}
-.brand span{display:block;font-size:10.5px;color:var(--mut);font-weight:400}
-nav{padding:12px 10px;flex:1}
-nav a{display:flex;align-items:center;gap:10px;padding:9px 12px;border-radius:8px;color:var(--mut);text-decoration:none;font-size:13px;margin-bottom:2px;cursor:pointer}
-nav a.active,nav a:hover{background:var(--surface2);color:var(--txt)}
-nav a.active{color:var(--acc)}
-nav .cap{font-size:10px;text-transform:uppercase;letter-spacing:1.2px;color:var(--mut2);padding:14px 12px 6px}
-.sideft{padding:14px 18px;border-top:1px solid var(--border);font-size:11px;color:var(--mut2)}
-.sideft .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--ok);margin-right:6px}
-
-/* ── Main ────────────────────────── */
-main{flex:1;min-width:0;display:flex;flex-direction:column}
-header{display:flex;align-items:center;gap:16px;padding:14px 28px;border-bottom:1px solid var(--border);background:var(--surface);position:sticky;top:0;z-index:5}
-header h1{font-size:15.5px;font-weight:600}
-header .crumb{color:var(--mut);font-size:12.5px}
-.hspace{margin-left:auto;display:flex;align-items:center;gap:10px}
-.btn{background:var(--surface2);border:1px solid var(--border);color:var(--txt);border-radius:8px;padding:7px 13px;font-size:12.5px;cursor:pointer}
-.btn:hover{border-color:var(--acc)}
-.refresh-info{font-size:11.5px;color:var(--mut2)}
-.content{padding:26px 28px;max-width:1480px;width:100%}
-
-/* ── KPI row ─────────────────────── */
-.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(178px,1fr));gap:14px;margin-bottom:24px}
-.kpi{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:16px 18px}
-.kpi .l{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.8px;margin-bottom:6px}
-.kpi .v{font-size:24px;font-weight:650;font-family:var(--mono)}
-.kpi .s{font-size:11.5px;color:var(--mut);margin-top:3px}
-.kpi.good .v{color:var(--ok)}.kpi.bad .v{color:var(--err)}.kpi.warn .v{color:var(--warn)}
-
-/* ── Cards / fleet ───────────────── */
-.panel{background:var(--surface);border:1px solid var(--border);border-radius:12px;margin-bottom:22px;overflow:hidden}
-.panel>.ph{display:flex;align-items:center;padding:14px 20px;border-bottom:1px solid var(--border)}
-.panel>.ph h2{font-size:13.5px;font-weight:600}
-.panel>.ph .sub{color:var(--mut);font-size:11.5px;margin-left:10px}
-table{width:100%;border-collapse:collapse;font-size:13px}
-th{font-size:10.5px;text-transform:uppercase;letter-spacing:.8px;color:var(--mut2);text-align:left;padding:10px 20px;border-bottom:1px solid var(--border);font-weight:600}
-td{padding:12px 20px;border-bottom:1px solid var(--border);vertical-align:middle}
-tr:last-child td{border-bottom:none}
-tr.row{cursor:pointer}
-tr.row:hover td{background:var(--surface2)}
-.badge{display:inline-flex;align-items:center;gap:6px;font-size:11.5px;font-weight:600;padding:3px 10px;border-radius:99px}
-.badge::before{content:'';width:7px;height:7px;border-radius:50%}
-.badge.ok{color:var(--ok);background:color-mix(in srgb,var(--ok) 12%,transparent)}.badge.ok::before{background:var(--ok)}
-.badge.error{color:var(--err);background:color-mix(in srgb,var(--err) 12%,transparent)}.badge.error::before{background:var(--err)}
-.badge.stale{color:var(--warn);background:color-mix(in srgb,var(--warn) 12%,transparent)}.badge.stale::before{background:var(--warn)}
-.mono{font-family:var(--mono);font-size:12.5px}
-.mut{color:var(--mut)}
-.spark{width:120px;height:34px}
-
-/* ── Detail ──────────────────────── */
-.grid2{display:grid;grid-template-columns:1fr 1fr;gap:22px}
-@media(max-width:1100px){.grid2{grid-template-columns:1fr}}
-.chartwrap{padding:18px 20px;height:280px}
-.errlist{list-style:none}
-.errlist li{padding:11px 20px;border-bottom:1px solid var(--border);font-size:12.5px}
-.errlist li:last-child{border-bottom:none}
-.errlist .t{color:var(--mut);font-family:var(--mono);font-size:11px;margin-bottom:2px}
-.errlist .m{color:var(--err)}
-.empty{padding:46px;text-align:center;color:var(--mut2)}
-.back{color:var(--acc);cursor:pointer;font-size:12.5px;text-decoration:none}
-.pillrow{display:flex;gap:8px;flex-wrap:wrap;padding:16px 20px}
-.pill{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:8px 14px;font-size:12px}
-.pill b{font-family:var(--mono);font-weight:600}
-footer{margin-top:auto;padding:16px 28px;color:var(--mut2);font-size:11px;border-top:1px solid var(--border)}
-</style>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0b1020">
+  <meta name="color-scheme" content="dark light">
+  <title>Backup Control · Mailcow Fleet</title>
+  <link rel="stylesheet" href="/static/styles.css">
+  <script
+    defer
+    src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"
+    integrity="sha384-JUh163oCRItcbPme8pYnROHQMC6fNKTBWtRG3I3I0erJkzNgL7uxKlNwcrcFKeqF"
+    crossorigin="anonymous"></script>
+  <script defer src="/static/app.js"></script>
 </head>
-<body data-theme="dark">
-<aside>
-  <div class="brand">
-    <div class="logo">🛡</div>
-    <div><b>Backup Control</b><span>Mailcow Fleet</span></div>
-  </div>
-  <nav id="nav">
-    <div class="cap">Monitoring</div>
-    <a data-view="fleet" class="active">▦&nbsp; Übersicht</a>
-    <div class="cap">Verwaltung</div>
-    <a data-view="peers" onclick="go('peers')">⊕&nbsp; Peers</a>
-    <a data-view="settings" onclick="go('settings')">⚙&nbsp; Einstellungen</a>
-    <div class="cap">Server</div>
-    <div id="navServers"></div>
-  </nav>
-  <div class="sideft"><span class="dot"></span>Collector aktiv</div>
-</aside>
-<main>
-  <header>
-    <h1 id="title">Übersicht</h1><span class="crumb" id="crumb"></span>
-    <div class="hspace">
-      <span class="refresh-info" id="refInfo"></span>
-      <button class="btn" onclick="toggleTheme()">◐ Theme</button>
-      <button class="btn" onclick="load(true)">↻ Aktualisieren</button>
-    </div>
-  </header>
-  <div class="content" id="content"><div class="empty">Lade Daten…</div></div>
-  <footer>Mailcow Backup Dashboard · Borg-verschlüsselte Backups · <span id="ftInfo"></span></footer>
-</main>
-<script>
-let DATA=[],SUM={},VIEW='fleet',charts=[];
-const $=(s)=>document.querySelector(s);
-const fmtTs=(ts)=>new Date(ts*1000).toLocaleString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
-const ago=(ts)=>{const d=Date.now()/1000-ts;if(d<3600)return Math.round(d/60)+' min';if(d<86400)return (d/3600).toFixed(1)+' h';return (d/86400).toFixed(1)+' d'};
-const gb=(v)=>v==null?'–':(v>=1000?(v/1000).toFixed(2)+' TB':v.toFixed(1)+' GB');
-const dur=(s)=>s==null?'–':(s>=3600?Math.floor(s/3600)+'h '+Math.round(s%3600/60)+'m':s>=60?Math.floor(s/60)+'m '+s%60+'s':s+'s');
-const stTxt={ok:'Gesund',error:'Fehler',stale:'Überfällig'};
+<body>
+  <a class="skip-link" href="#main-content">Zum Hauptinhalt springen</a>
 
-function toggleTheme(){const b=document.body;b.dataset.theme=b.dataset.theme==='dark'?'light':'dark';localStorage.theme=b.dataset.theme;load(false)}
-if(localStorage.theme)document.body.dataset.theme=localStorage.theme;
+  <div class="app-shell">
+    <button class="sidebar-backdrop" type="button" data-action="close-menu" aria-label="Navigation schließen"></button>
 
-function killCharts(){charts.forEach(c=>c.destroy());charts=[]}
-function css(v){return getComputedStyle(document.body).getPropertyValue(v).trim()}
+    <aside class="sidebar" id="sidebar" aria-label="Hauptnavigation">
+      <a class="brand" href="#/overview" aria-label="Backup Control – Übersicht">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" role="img">
+            <path d="M12 2.5 20 6v5.5c0 5.1-3.4 8.6-8 10-4.6-1.4-8-4.9-8-10V6l8-3.5Z"></path>
+            <path d="m8.6 12.1 2.2 2.2 4.8-5"></path>
+          </svg>
+        </span>
+        <span>
+          <strong>Backup Control</strong>
+          <small>Mailcow Fleet</small>
+        </span>
+      </a>
 
-async function load(manual){
-  try{
-    const[sv,sm]=await Promise.all([fetch('/api/servers'),fetch('/api/summary')]);
-    DATA=await sv.json();SUM=await sm.json();
-    render();
-    $('#refInfo').textContent='Stand '+new Date().toLocaleTimeString('de-DE');
-    $('#ftInfo').textContent=SUM.servers+' Server · '+gb(SUM.repo_total_gb)+' belegt';
-    renderNav();
-  }catch(e){$('#content').innerHTML='<div class="empty">⚠ Collector nicht erreichbar</div>'}
-}
+      <nav class="nav" aria-label="Bereiche">
+        <p class="nav-label">Monitoring</p>
+        <a class="nav-item" href="#/overview" data-nav="overview">
+          <span class="nav-icon" aria-hidden="true">⌁</span>
+          <span>Übersicht</span>
+        </a>
 
-function renderNav(){
-  $('#navServers').innerHTML=DATA.map(s=>`<a data-view="${s.server}" class="${VIEW===s.server?'active':''}" onclick="go('${s.server}')">
-    <span style="width:7px;height:7px;border-radius:50%;background:var(--${s.state==='ok'?'ok':s.state==='error'?'err':'warn'})"></span>${s.server.split('.')[0]}</a>`).join('');
-  document.querySelectorAll('nav a[data-view="fleet"]').forEach(a=>{a.classList.toggle('active',VIEW==='fleet');a.onclick=()=>go('fleet')});
-}
-function go(v){VIEW=v;render();renderNav()}
+        <p class="nav-label">Verwaltung</p>
+        <a class="nav-item" href="#/peers" data-nav="peers">
+          <span class="nav-icon" aria-hidden="true">＋</span>
+          <span>Peers</span>
+        </a>
+        <a class="nav-item" href="#/settings" data-nav="settings">
+          <span class="nav-icon" aria-hidden="true">⚙</span>
+          <span>Einstellungen</span>
+        </a>
 
-function render(){
-  killCharts();
-  if(VIEW==='fleet')renderFleet();
-  else if(VIEW==='peers')renderPeers();
-  else if(VIEW==='settings')renderSettings();
-  else renderDetail(DATA.find(s=>s.server===VIEW)||DATA[0]);
-}
-
-/* ── Settings view (Version + Updater) ── */
-async function renderSettings(){
-  $('#title').textContent='Einstellungen';$('#crumb').textContent='System & Updates';
-  let v=null,err='';
-  try{v=await api('/api/settings/version')}catch(e){err=e.message}
-  if(err){$('#content').innerHTML=`<div class="panel"><div class="empty">⚠ ${err} — <a class="back" onclick="localStorage.removeItem('dashToken');renderSettings()">Token neu eingeben</a></div></div>`;return}
-  const up=v.update_available;
-  $('#content').innerHTML=`
-  <div class="grid2">
-    <div class="panel"><div class="ph"><h2>Software-Version</h2><span class="sub">${v.repo_dir}</span></div>
-      <div class="pillrow" style="flex-direction:column;align-items:stretch;gap:10px">
-        <div class="pill">Installiert: <b>${v.installed.commit||'?'}</b> <span class="mut">· ${v.installed.date||''}</span><br>
-          <span class="mut" style="font-size:11px">${v.installed.subject||''}</span></div>
-        <div class="pill" style="${up?'border-color:var(--warn)':''}">Neueste (origin/main): <b>${v.latest.commit||'?'}</b> <span class="mut">· ${v.latest.date||''}</span><br>
-          <span class="mut" style="font-size:11px">${v.latest.subject||''}</span></div>
-        <div>${up
-          ?`<span class="badge stale">Update verfügbar — ${v.behind} Commit(s) hinterher</span>`
-          :`<span class="badge ok">Auf dem neuesten Stand</span>`}</div>
-        <div style="display:flex;gap:10px">
-          <button class="btn" style="border-color:var(--acc);color:var(--acc)" ${up?'':'disabled style="opacity:.45"'} onclick="doUpdate()">↻ Update installieren</button>
-          <button class="btn" onclick="renderSettings()">Erneut prüfen</button>
+        <div class="server-nav-header">
+          <p class="nav-label">Server</p>
+          <span class="nav-count" id="server-count">0</span>
         </div>
-        <div id="updMsg" class="mut" style="font-size:12px"></div>
-      </div>
-    </div>
-    <div class="panel"><div class="ph"><h2>Update-Log</h2><span class="sub">letzte Zeilen</span></div>
-      <pre id="updLog" style="padding:16px 20px;font-family:var(--mono);font-size:11px;color:var(--mut);white-space:pre-wrap;max-height:320px;overflow:auto">Lade…</pre></div>
-  </div>
-  <div class="panel"><div class="ph"><h2>System-Info</h2></div>
-    <div class="pillrow">
-      <div class="pill">Stale-Schwelle: <b>${v.stale_hours} h</b></div>
-      <div class="pill">Agent-Selbst-Update: <b>über /agent/script</b></div>
-      <div class="pill">Update-Mechanik: <b>git pull → deploy → restart (Rollback bei Fehler)</b></div>
-    </div></div>`;
-  loadUpdLog();
-}
-async function loadUpdLog(){
-  try{const tok=localStorage.dashToken;
-    const r=await fetch('/api/settings/update-log',{headers:{'Authorization':'Bearer '+tok}});
-    $('#updLog').textContent=await r.text();
-  }catch(e){$('#updLog').textContent='(Log nicht lesbar)'}
-}
-async function doUpdate(){
-  if(!confirm('Update jetzt installieren? Das Dashboard startet dabei kurz neu.'))return;
-  try{
-    const r=await api('/api/settings/update',{method:'POST'});
-    $('#updMsg').textContent='⏳ '+r.message+' Seite lädt in 15 s neu…';
-    setTimeout(()=>location.reload(),15000);
-  }catch(e){alert('Fehler: '+e.message)}
-}
+        <div id="server-nav" class="server-nav" aria-live="polite"></div>
+      </nav>
 
-/* ── Peers view (NetBird-Style Onboarding) ── */
-function tokenPrompt(){
-  if(!localStorage.dashToken){
-    const t=prompt('Admin-Token (Inhalt von /etc/backupdash.token):');
-    if(t)localStorage.dashToken=t.trim();
-  }
-  return localStorage.dashToken;
-}
-async function api(path,opts={}){
-  const tok=tokenPrompt();if(!tok)throw new Error('kein Token');
-  opts.headers=Object.assign({'Authorization':'Bearer '+tok,'Content-Type':'application/json'},opts.headers||{});
-  const r=await fetch(path,opts);
-  if(r.status===401){localStorage.removeItem('dashToken');throw new Error('Token ungültig')}
-  if(!r.ok)throw new Error((await r.json()).detail||r.status);
-  return r.json();
-}
-async function renderPeers(){
-  $('#title').textContent='Peers';$('#crumb').textContent='Server-Onboarding & Verwaltung';
-  let peers=[];let err='';
-  try{peers=await api('/api/peers')}catch(e){err=e.message}
-  $('#content').innerHTML=`
-  ${err?`<div class="panel"><div class="empty">⚠ ${err} — <a class="back" onclick="localStorage.removeItem('dashToken');renderPeers()">Token neu eingeben</a></div></div>`:''}
-  <div class="grid2">
-    <div class="panel"><div class="ph"><h2>Neuen Peer anlegen</h2><span class="sub">erzeugt Enrollment-Befehl</span></div>
-      <div style="padding:20px;display:grid;gap:12px">
-        <label class="fld">Name (Hostname)<input id="pName" placeholder="mail2.example.de"></label>
-        <label class="fld">Borg-Ziel<input id="pRepo" placeholder="u123456@u123456.your-storagebox.de:backups/mail2-borg"></label>
-        <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
-          <label class="fld">SSH-Port<input id="pPort" value="23" type="number"></label>
-          <label class="fld">Aufbewahrung (Tage)<input id="pKeep" value="7" type="number"></label>
-          <label class="fld">Uhrzeit (Std)<input id="pHour" value="3" type="number" min="0" max="23"></label>
+      <div class="sidebar-footer">
+        <div class="collector-state">
+          <span class="connection-dot" id="sidebar-status-dot" aria-hidden="true"></span>
+          <span>
+            <strong id="sidebar-status">Verbinde …</strong>
+            <small id="sidebar-status-detail">Collector wird geprüft</small>
+          </span>
         </div>
-        <label class="fld">mailcow-Verzeichnis<input id="pDir" value="/opt/mailcow-dockerized"></label>
-        <button class="btn" style="justify-self:start;border-color:var(--acc);color:var(--acc)" onclick="createPeer()">⊕ Peer anlegen</button>
-        <div id="enrollOut"></div>
+        <button class="icon-button is-hidden" id="lock-button" type="button" data-action="lock-session" aria-label="Admin-Sitzung sperren" title="Admin-Sitzung sperren">⌁</button>
       </div>
-    </div>
-    <div class="panel"><div class="ph"><h2>Registrierte Peers</h2><span class="sub">${peers.length}</span></div>
-      ${peers.length?`<table><thead><tr><th>Name</th><th>Angelegt</th><th>Enrolled</th><th>Ziel</th><th></th></tr></thead><tbody>
-      ${peers.map(p=>`<tr>
-        <td><b>${p.name}</b></td>
-        <td class="mono">${fmtTs(p.created_ts)}</td>
-        <td>${p.enrolled_ts?'<span class="badge ok">Ja</span>':'<span class="badge stale">Ausstehend</span>'}</td>
-        <td class="mono" style="font-size:11px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${p.config.borg_repo}</td>
-        <td style="text-align:right">
-          <button class="btn" style="padding:4px 9px;font-size:11px" onclick="showEnroll('${p.enroll_key}','${p.name}')">Befehl</button>
-          <button class="btn" style="padding:4px 9px;font-size:11px;color:var(--err)" onclick="delPeer('${p.name}')">✕</button>
-        </td></tr>`).join('')}</tbody></table>`:'<div class="empty">Noch keine Peers angelegt.</div>'}
-    </div>
-  </div>
-  <style>
-    .fld{display:grid;gap:5px;font-size:11.5px;color:var(--mut)}
-    .fld input{background:var(--surface2);border:1px solid var(--border);border-radius:8px;padding:9px 12px;color:var(--txt);font-size:13px;font-family:var(--mono)}
-    .fld input:focus{outline:none;border-color:var(--acc)}
-    .cmdbox{background:var(--surface2);border:1px solid var(--acc);border-radius:10px;padding:14px;margin-top:6px}
-    .cmdbox .cl{font-size:11px;color:var(--mut);margin-bottom:8px}
-    .cmdbox code{display:block;font-family:var(--mono);font-size:12px;word-break:break-all;color:var(--acc);cursor:pointer}
-    .cmdbox .hint{font-size:11px;color:var(--mut);margin-top:8px}
-  </style>`;
-}
-function enrollHtml(cmd){
-  return `<div class="cmdbox"><div class="cl">Auf dem Mailcow-Server als root ausführen (Klick = kopieren):</div>
-  <code onclick="navigator.clipboard.writeText(this.textContent);this.style.color='var(--ok)'">${cmd}</code>
-  <div class="hint">Der Befehl installiert Borg, schreibt Konfig + Agent + Cron. Danach: SSH-Key am Ziel hinterlegen, Repo initialisieren, Testlauf (Anweisungen erscheinen im Terminal).</div></div>`;
-}
-async function createPeer(){
-  try{
-    const body={name:$('#pName').value.trim(),borg_repo:$('#pRepo').value.trim(),
-      borg_ssh_port:+$('#pPort').value,keep_daily:+$('#pKeep').value,hour:+$('#pHour').value,
-      mailcow_dir:$('#pDir').value.trim()||'/opt/mailcow-dockerized'};
-    if(!body.name||!body.borg_repo){alert('Name und Borg-Ziel sind Pflicht');return}
-    const r=await api('/api/peers',{method:'POST',body:JSON.stringify(body)});
-    $('#enrollOut').innerHTML=enrollHtml(r.command);
-  }catch(e){alert('Fehler: '+e.message)}
-}
-function showEnroll(key,name){
-  const cmd=location.origin+'/enroll/'+key;
-  $('#enrollOut')?($('#enrollOut').innerHTML=enrollHtml('curl -fsSL '+cmd+' | bash')):alert(cmd);
-}
-async function delPeer(name){
-  if(!confirm('Peer "'+name+'" löschen? (Backups/Server bleiben unberührt — nur der Enrollment-Eintrag verschwindet)'))return;
-  try{await api('/api/peers/'+encodeURIComponent(name),{method:'DELETE'});renderPeers()}catch(e){alert('Fehler: '+e.message)}
-}
+    </aside>
 
-/* ── Fleet view ── */
-function renderFleet(){
-  $('#title').textContent='Übersicht';$('#crumb').textContent='Fleet-Status aller Mailcow-Server';
-  const k=SUM;
-  $('#content').innerHTML=`
-  <div class="kpis">
-    <div class="kpi ${k.error?'bad':k.stale?'warn':'good'}"><div class="l">Fleet-Status</div><div class="v">${k.error?'FEHLER':k.stale?'PRÜFEN':'GESUND'}</div><div class="s">${k.ok}/${k.servers} Server grün</div></div>
-    <div class="kpi"><div class="l">Server</div><div class="v">${k.servers}</div><div class="s">angebunden</div></div>
-    <div class="kpi"><div class="l">Speicher belegt</div><div class="v">${gb(k.repo_total_gb)}</div><div class="s">alle Repos gesamt</div></div>
-    <div class="kpi"><div class="l">Läufe 24 h</div><div class="v">${k.runs_24h}</div><div class="s">Backup-Reports</div></div>
-    <div class="kpi ${k.fails_7d?'bad':''}"><div class="l">Fehler 7 Tage</div><div class="v">${k.fails_7d}</div><div class="s">fehlgeschlagene Läufe</div></div>
-  </div>
-  <div class="panel"><div class="ph"><h2>Server</h2><span class="sub">Klick für Details</span></div>
-  <table><thead><tr><th>Status</th><th>Server</th><th>Letzter Lauf</th><th>Dauer</th><th>Backup</th><th>Repo</th><th>Stände</th><th>Trend (Repo)</th></tr></thead>
-  <tbody>${DATA.map((s,i)=>{const l=s.last;return `<tr class="row" onclick="go('${s.server}')">
-    <td><span class="badge ${s.state}">${stTxt[s.state]}</span></td>
-    <td><b>${s.server}</b></td>
-    <td class="mono">${fmtTs(l.ts)}<span class="mut"> · vor ${ago(l.ts)}</span></td>
-    <td class="mono">${dur(l.duration_s)}</td>
-    <td class="mono">${gb(l.backup_gb)}</td>
-    <td class="mono">${gb(l.repo_gb)}</td>
-    <td class="mono">${l.archives??'–'}</td>
-    <td><canvas class="spark" id="sp${i}"></canvas></td></tr>`}).join('')}</tbody></table>
-  ${!DATA.length?'<div class="empty">Noch keine Reports empfangen. Agent auf einem Mailcow-Server installieren → docs/INSTALL.md</div>':''}</div>`;
-  DATA.forEach((s,i)=>{
-    const el=document.getElementById('sp'+i);if(!el)return;
-    charts.push(new Chart(el,{type:'line',data:{labels:s.history.map(h=>h.ts),
-      datasets:[{data:s.history.map(h=>h.repo_gb),borderColor:css('--acc'),borderWidth:1.5,pointRadius:0,tension:.35,fill:false}]},
-      options:{responsive:false,plugins:{legend:{display:false},tooltip:{enabled:false}},scales:{x:{display:false},y:{display:false}}}}));
-  });
-}
+    <div class="workspace">
+      <header class="topbar">
+        <button class="icon-button menu-button" type="button" data-action="open-menu" aria-label="Navigation öffnen" aria-controls="sidebar" aria-expanded="false">☰</button>
+        <div class="page-context">
+          <p class="eyebrow" id="page-eyebrow">Monitoring</p>
+          <h1 id="page-title">Übersicht</h1>
+        </div>
+        <div class="topbar-actions">
+          <span class="sync-label" id="sync-label" aria-live="polite">Noch nicht synchronisiert</span>
+          <button class="icon-button" type="button" data-action="toggle-theme" aria-label="Farbschema wechseln" title="Farbschema wechseln">◐</button>
+          <button class="button button-secondary refresh-button" type="button" data-action="refresh">
+            <span class="refresh-icon" aria-hidden="true">↻</span>
+            <span class="button-label">Aktualisieren</span>
+          </button>
+        </div>
+      </header>
 
-/* ── Detail view ── */
-function renderDetail(s){
-  if(!s){go('fleet');return}
-  const l=s.last;
-  $('#title').textContent=s.server;$('#crumb').textContent='Server-Details';
-  $('#content').innerHTML=`
-  <a class="back" onclick="go('fleet')">← Zurück zur Übersicht</a><div style="height:14px"></div>
-  <div class="kpis">
-    <div class="kpi ${s.state==='ok'?'good':s.state==='error'?'bad':'warn'}"><div class="l">Status</div><div class="v">${stTxt[s.state]}</div><div class="s">letzter Lauf vor ${ago(l.ts)}</div></div>
-    <div class="kpi"><div class="l">Backup-Größe</div><div class="v">${gb(l.backup_gb)}</div><div class="s">letzter Stand</div></div>
-    <div class="kpi"><div class="l">Repo-Größe</div><div class="v">${gb(l.repo_gb)}</div><div class="s">dedupliziert + verschlüsselt</div></div>
-    <div class="kpi"><div class="l">Dauer</div><div class="v">${dur(l.duration_s)}</div><div class="s">letzter Lauf</div></div>
-    <div class="kpi"><div class="l">Aufbewahrung</div><div class="v">${l.archives??'–'}</div><div class="s">Archiv-Stände</div></div>
+      <main id="main-content" tabindex="-1">
+        <div class="page-loading" role="status">
+          <span class="spinner" aria-hidden="true"></span>
+          <span>Fleet-Daten werden geladen …</span>
+        </div>
+      </main>
+
+      <footer class="app-footer">
+        <span>Backup Control</span>
+        <span aria-hidden="true">·</span>
+        <span id="footer-summary">Zentrales Mailcow-Backup-Monitoring</span>
+      </footer>
+    </div>
   </div>
-  <div class="grid2">
-    <div class="panel"><div class="ph"><h2>Speicherverlauf</h2><span class="sub">Backup vs. Repo (GB)</span></div><div class="chartwrap"><canvas id="c1"></canvas></div></div>
-    <div class="panel"><div class="ph"><h2>Laufzeit</h2><span class="sub">Minuten pro Lauf</span></div><div class="chartwrap"><canvas id="c2"></canvas></div></div>
-  </div>
-  <div class="panel"><div class="ph"><h2>Letzte Läufe</h2></div>
-  <table><thead><tr><th>Zeitpunkt</th><th>Status</th><th>Dauer</th><th>Backup</th><th>Repo</th><th>Stände</th></tr></thead>
-  <tbody>${[...s.history].reverse().slice(0,15).map(h=>`<tr>
-    <td class="mono">${fmtTs(h.ts)}</td>
-    <td><span class="badge ${h.status==='ok'?'ok':'error'}">${h.status==='ok'?'OK':'Fehler'}</span></td>
-    <td class="mono">${dur(h.duration_s)}</td><td class="mono">${gb(h.backup_gb)}</td>
-    <td class="mono">${gb(h.repo_gb)}</td><td class="mono">${h.archives??'–'}</td></tr>`).join('')}</tbody></table></div>
-  <div class="panel"><div class="ph"><h2>Fehler-Historie</h2><span class="sub">letzte 10</span></div>
-  ${s.recent_errors.length?`<ul class="errlist">${s.recent_errors.map(e=>`<li><div class="t">${fmtTs(e.ts)}</div><div class="m">${e.message||'unbekannter Fehler'}</div></li>`).join('')}</ul>`:'<div class="empty">Keine Fehler aufgezeichnet 🎉</div>'}</div>`;
-  const H=s.history,lb=H.map(h=>new Date(h.ts*1000).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit'}));
-  const gopt=(y1)=>({responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},
-    plugins:{legend:{labels:{color:css('--mut'),boxWidth:11,font:{size:11}}}},
-    scales:{x:{ticks:{color:css('--mut'),font:{size:10}},grid:{color:css('--border')}},
-      y:{ticks:{color:css('--mut'),font:{size:10}},grid:{color:css('--border')}}}});
-  charts.push(new Chart($('#c1'),{type:'line',data:{labels:lb,datasets:[
-    {label:'Backup GB',data:H.map(h=>h.backup_gb),borderColor:css('--acc'),backgroundColor:css('--acc')+'22',fill:true,tension:.3,pointRadius:2},
-    {label:'Repo GB',data:H.map(h=>h.repo_gb),borderColor:css('--ok'),tension:.3,pointRadius:2}]},options:gopt()}));
-  charts.push(new Chart($('#c2'),{type:'bar',data:{labels:lb,datasets:[
-    {label:'Minuten',data:H.map(h=>h.duration_s!=null?+(h.duration_s/60).toFixed(1):null),
-     backgroundColor:H.map(h=>h.status==='ok'?css('--acc')+'99':css('--err')+'bb'),borderRadius:4}]},options:gopt()}));
-}
-load(false);setInterval(()=>load(false),60000);
-</script>
+
+  <div class="toast-region" id="toast-region" aria-live="polite" aria-atomic="true"></div>
+
+  <dialog class="modal" id="auth-dialog" aria-labelledby="auth-title" aria-describedby="auth-description">
+    <form class="modal-card" id="auth-form">
+      <div class="modal-icon" aria-hidden="true">⌁</div>
+      <div>
+        <p class="eyebrow">Geschützter Bereich</p>
+        <h2 id="auth-title">Admin-Sitzung entsperren</h2>
+        <p id="auth-description">Für Peer-Verwaltung und Systemupdates wird der Admin-Token benötigt.</p>
+      </div>
+      <label class="field">
+        <span>Admin-Token</span>
+        <input id="auth-token" name="token" type="password" autocomplete="current-password" required>
+      </label>
+      <label class="check-field">
+        <input id="auth-remember" name="remember" type="checkbox">
+        <span>Auf diesem Gerät speichern</span>
+      </label>
+      <p class="form-error" id="auth-error" role="alert"></p>
+      <div class="modal-actions">
+        <button class="button button-secondary" type="button" data-action="cancel-auth">Abbrechen</button>
+        <button class="button button-primary" type="submit">Entsperren</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="modal" id="confirm-dialog" aria-labelledby="confirm-title" aria-describedby="confirm-message">
+    <form class="modal-card modal-card-compact" method="dialog">
+      <div>
+        <p class="eyebrow" id="confirm-eyebrow">Aktion bestätigen</p>
+        <h2 id="confirm-title">Sind Sie sicher?</h2>
+        <p id="confirm-message"></p>
+      </div>
+      <div class="modal-actions">
+        <button class="button button-secondary" value="cancel">Abbrechen</button>
+        <button class="button button-danger" id="confirm-submit" value="confirm">Bestätigen</button>
+      </div>
+    </form>
+  </dialog>
 </body>
 </html>

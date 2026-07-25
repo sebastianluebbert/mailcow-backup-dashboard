@@ -5,9 +5,11 @@ Zentrales, verschlüsseltes Backup-Monitoring für beliebig viele **mailcow**-Se
 - 🔐 **Borg Backup** (repokey-blake2, zstd) auf beliebige SSH-Ziele (z. B. Hetzner Storage Box)
 - 📦 Vollbackup aller mailcow-Komponenten (vmail, MariaDB, Redis, Rspamd, Crypt-Keys, Config)
 - 🧹 Automatische Aufbewahrung (`borg prune`, Standard: 7 Tagesstände)
-- 📊 **Enterprise-Dashboard**: Fleet-Übersicht, KPI-Kacheln, Verlaufs-Charts, Fehler-Historie
+- 📊 **Operations-Dashboard**: responsive Fleet-Übersicht, KPI-Kacheln, Suche, Filter,
+  Verlaufs-Charts, Fehler-Historie und barrierearme Bedienung
 - 🚨 Stale-Erkennung (>26 h kein Backup → Warnung) + `/api/health` für Uptime-Kuma
 - 🛰 Agent meldet jeden Lauf (ok/Fehler, Dauer, Größen) per REST an den Collector
+- ⚙️ Geschützte Systemseite mit Versionsprüfung, Update-Workflow und Loganzeige
 
 ## Architektur
 
@@ -29,7 +31,7 @@ Zentrales, verschlüsseltes Backup-Monitoring für beliebig viele **mailcow**-Se
 
 | Pfad | Zweck |
 |------|-------|
-| `server/` | Dashboard/Collector (FastAPI + SQLite + Chart.js) |
+| `server/` | Dashboard/Collector (FastAPI + SQLite + Vanilla JS + Chart.js) |
 | `server/install-server.sh` | Installer für den Dashboard-Host (LXC/VM, Debian) |
 | `agent/mailcow-backup.sh` | Backup-Skript (läuft per Cron auf jedem mailcow) |
 | `agent/install-agent.sh` | Interaktiver Installer für neue mailcow-Server |
@@ -44,7 +46,7 @@ Zentrales, verschlüsseltes Backup-Monitoring für beliebig viele **mailcow**-Se
 ```bash
 git clone https://github.com/sebastianluebbert/mailcow-backup-dashboard.git
 cd mailcow-backup-dashboard/server
-bash install-server.sh          # fragt Port & erzeugt API-Token
+bash install-server.sh          # fragt Port & erzeugt Agent-/Admin-Token
 ```
 
 **2. Agent auf jedem mailcow-Server:**
@@ -60,7 +62,8 @@ Details: [docs/INSTALL.md](docs/INSTALL.md)
 
 ## Updates
 
-**Dashboard:** manuell per `update.sh` — zieht `origin/main`, deployt Server-Dateien,
+**Dashboard:** über **Einstellungen → Update installieren** oder manuell per
+`update.sh`. Der Updater zieht `origin/main`, deployt die Server-Dateien und
 startet den Dienst neu (mit automatischem Rollback bei Startfehler).
 
 ```bash
@@ -77,7 +80,12 @@ Nach einem Dashboard-Update folgt die Flotte also automatisch beim nächsten Lau
 - Backups sind **client-seitig verschlüsselt** (Borg repokey-blake2) — das Ziel sieht nur Chiffrat.
 - **Passphrase** (`/root/.borg-passphrase`) und **Key-Export** (`/root/borg-key-backup.txt`)
   unbedingt extern sichern — ohne sie ist kein Restore möglich.
-- Dashboard-API nur mit Bearer-Token beschreibbar; Betrieb im LAN/VPN empfohlen.
+- Neue Installationen verwenden getrennte **Agent- und Admin-Tokens**. Der
+  Admin-Token liegt unter `/etc/backupdash.admin.token`.
+- Agent-Self-Updates und schreibende APIs benötigen einen Bearer-Token;
+  Enrollment-Keys sind nur einmal verwendbar.
+- Sicherheitsheader und kontextgerechtes HTML-Escaping härten die Oberfläche.
+  Der Betrieb hinter HTTPS in einem LAN/VPN bleibt empfohlen.
 
 ## Lizenz
 

@@ -50,7 +50,8 @@ echo "=== Backup-Start: $(date) ==="
 : "${SELF_UPDATE:=1}"
 if [ "$SELF_UPDATE" = 1 ] && [ -n "$DASH_URL" ] && [ "${MAILCOW_AGENT_UPDATED:-0}" != 1 ]; then
   NEW=$(mktemp)
-  if curl -fsS -m 30 "$DASH_URL/agent/script" -o "$NEW" 2>/dev/null \
+  if curl -fsS -m 30 -H "Authorization: Bearer $DASH_TOKEN" \
+     "$DASH_URL/agent/script" -o "$NEW" 2>/dev/null \
      && bash -n "$NEW" 2>/dev/null && grep -q "Mailcow Backup Agent" "$NEW"; then
     if ! cmp -s "$NEW" "$0"; then
       echo "Selbst-Update: neue Agent-Version vom Dashboard uebernommen."

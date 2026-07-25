@@ -1,0 +1,39 @@
+name: Quality
+
+on:
+  push:
+    branches: ["main", "cursor/**"]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  static-checks:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Validate Python
+        run: python -m compileall -q server tests
+
+      - name: Validate JavaScript
+        run: node --check server/static/app.js
+
+      - name: Validate shell scripts
+        run: bash -n agent/install-agent.sh agent/mailcow-backup.sh server/install-server.sh update.sh
+
+      - name: Run UI contract tests
+        run: python -m unittest discover -s tests -v

@@ -1,31 +1,68 @@
 #!/usr/bin/env python3
-"""Mailcow Backup Dashboard — central collector & enterprise UI.
+"""Mailcow Backup Dashboard — central collector & operations UI.
 
 Endpoints:
   POST /api/report     — agents push backup results (Bearer token)
   GET  /api/servers    — fleet state + per-server history
   GET  /api/summary    — aggregated KPIs for the fleet
   GET  /api/health     — plain health endpoint (Uptime-Kuma friendly)
+  GET  /api/peers      — protected peer administration
+  GET  /api/settings/* — protected version, update and log operations
   GET  /               — dashboard UI
 """
+import asyncio
 import os
 import secrets
+import shlex
 import sqlite3
 import subprocess
 import time
+from collections import deque
 from contextlib import closing
 
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 BASE = os.path.dirname(os.path.abspath(__file__))
 DB = os.environ.get("DASH_DB", os.path.join(BASE, "data", "backups.db"))
 API_TOKEN = os.environ.get("DASH_TOKEN", "")
+ADMIN_TOKEN = os.environ.get("DASH_ADMIN_TOKEN", API_TOKEN)
 STALE_HOURS = int(os.environ.get("DASH_STALE_HOURS", "26"))
 
 app = FastAPI(title="Mailcow Backup Dashboard", docs_url=None, redoc_url=None)
+
+
+@app.middleware("http")
+async def security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' https://cdn.jsdelivr.net; "
+        "style-src 'self'; img-src 'self' data:; font-src 'self'; "
+        "connect-src 'self'; object-src 'none'; base-uri 'self'; "
+        "form-action 'self'; frame-ancestors 'none'"
+    )
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=()"
+    response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
+    if request.url.scheme == "https":
+        response.headers["Strict-Transport-Security"] = "max-age=31536000"
+    if request.url.path.startswith(("/api/", "/enroll/")):
+        response.headers["Cache-Control"] = "no-store"
+    elif request.url.path in ("/", "/static/app.js", "/static/styles.css"):
+        response.headers["Cache-Control"] = "no-cache"
+    return response
+
+
+def require_token(authorization: str, expected: str):
+    prefix = "Bearer "
+    supplied = authorization[len(prefix):] if authorization.startswith(prefix) else ""
+    if not expected or not supplied or not secrets.compare_digest(supplied, expected):
+        raise HTTPException(401, "invalid token")
 
 
 def db():
@@ -75,8 +112,7 @@ def _state(last_status: str, last_ts: int, now: float) -> str:
 
 @app.post("/api/report")
 async def report(r: Report, authorization: str = Header(default="")):
-    if not API_TOKEN or authorization != f"Bearer {API_TOKEN}":
-        raise HTTPException(401, "invalid token")
+    require_token(authorization, API_TOKEN)
     if r.status not in ("ok", "error"):
         raise HTTPException(422, "status must be ok|error")
     with closing(db()) as conn:
@@ -157,6 +193,11 @@ async def health():
     with closing(db()) as conn:
         names = conn.execute(
             "SELECT server, MAX(ts) AS last_ts FROM reports GROUP BY server").fetchall()
+        if not names:
+            return JSONResponse(
+                {"status": "empty", "problems": [{"state": "no_servers"}]},
+                status_code=503,
+            )
         bad = []
         for n in names:
             last = conn.execute(
@@ -184,28 +225,32 @@ if not os.path.exists(AGENT_SCRIPT):
 
 
 class Peer(BaseModel):
-    name: str
-    borg_repo: str
-    borg_ssh_port: int = 23
-    keep_daily: int = 7
-    hour: int = 3
-    mailcow_dir: str = "/opt/mailcow-dockerized"
-    threads: int = 4
+    name: str = Field(min_length=1, max_length=200, pattern=r"^[A-Za-z0-9._-]+$")
+    borg_repo: str = Field(min_length=3, max_length=500)
+    borg_ssh_port: int = Field(default=23, ge=1, le=65535)
+    keep_daily: int = Field(default=7, ge=1, le=3650)
+    hour: int = Field(default=3, ge=0, le=23)
+    mailcow_dir: str = Field(default="/opt/mailcow-dockerized", min_length=1, max_length=500)
+    threads: int = Field(default=4, ge=1, le=64)
 
 
 @app.get("/api/peers")
 async def peers_list(authorization: str = Header(default="")):
-    if not API_TOKEN or authorization != f"Bearer {API_TOKEN}":
-        raise HTTPException(401, "invalid token")
+    require_token(authorization, ADMIN_TOKEN)
     with closing(db()) as conn:
         rows = conn.execute("SELECT * FROM peers ORDER BY name").fetchall()
-    return [dict(r) | {"config": _json.loads(r["config"])} for r in rows]
+    peers = []
+    for row in rows:
+        peer = dict(row) | {"config": _json.loads(row["config"])}
+        if peer["enrolled_ts"]:
+            peer["enroll_key"] = None
+        peers.append(peer)
+    return peers
 
 
 @app.post("/api/peers")
 async def peers_create(p: Peer, request: Request, authorization: str = Header(default="")):
-    if not API_TOKEN or authorization != f"Bearer {API_TOKEN}":
-        raise HTTPException(401, "invalid token")
+    require_token(authorization, ADMIN_TOKEN)
     key = secrets.token_urlsafe(24)
     with closing(db()) as conn:
         try:
@@ -222,8 +267,7 @@ async def peers_create(p: Peer, request: Request, authorization: str = Header(de
 
 @app.delete("/api/peers/{name}")
 async def peers_delete(name: str, authorization: str = Header(default="")):
-    if not API_TOKEN or authorization != f"Bearer {API_TOKEN}":
-        raise HTTPException(401, "invalid token")
+    require_token(authorization, ADMIN_TOKEN)
     with closing(db()) as conn:
         cur = conn.execute("DELETE FROM peers WHERE name=?", (name,))
         conn.commit()
@@ -236,9 +280,11 @@ async def peers_delete(name: str, authorization: str = Header(default="")):
 async def enroll(key: str, request: Request):
     """One-shot enrollment script — configures a mailcow server as backup peer."""
     with closing(db()) as conn:
-        row = conn.execute("SELECT * FROM peers WHERE enroll_key=?", (key,)).fetchone()
+        row = conn.execute(
+            "SELECT * FROM peers WHERE enroll_key=? AND enrolled_ts IS NULL", (key,)
+        ).fetchone()
         if not row:
-            raise HTTPException(404, "unknown enrollment key")
+            raise HTTPException(404, "unknown or already used enrollment key")
         conn.execute("UPDATE peers SET enrolled_ts=? WHERE enroll_key=?",
                      (int(time.time()), key))
         conn.commit()
@@ -248,12 +294,28 @@ async def enroll(key: str, request: Request):
         agent = open(AGENT_SCRIPT).read()
     except OSError:
         raise HTTPException(500, "agent script missing on server")
-    # Agent-Skript wird als Heredoc eingebettet -> ein einziger curl|bash-Befehl
+    peer_name = shlex.quote(row["name"])
+    mailcow_dir = shlex.quote(cfg["mailcow_dir"])
+    borg_repo = shlex.quote(cfg["borg_repo"])
+    dashboard_url = shlex.quote(base)
+    dashboard_token = shlex.quote(API_TOKEN)
+    # Values are shell-quoted before being embedded. The generated config uses
+    # printf %q so command substitutions in peer input can never be evaluated.
     return f"""#!/bin/bash
-# Mailcow Backup Agent — automatisches Enrollment für Peer '{row["name"]}'
+# Mailcow Backup Agent — automatisches Enrollment
 set -euo pipefail
 [ "$(id -u)" = 0 ] || {{ echo "Bitte als root ausführen."; exit 1; }}
-echo "── Enrollment: {row["name"]} ──"
+
+PEER_NAME={peer_name}
+MAILCOW_DIR={mailcow_dir}
+BORG_REPO={borg_repo}
+BORG_SSH_PORT={cfg["borg_ssh_port"]}
+KEEP_DAILY={cfg["keep_daily"]}
+THREADS={cfg["threads"]}
+DASH_URL={dashboard_url}
+DASH_TOKEN={dashboard_token}
+
+echo "── Enrollment: $PEER_NAME ──"
 
 apt-get update -qq && apt-get install -y -qq borgbackup curl >/dev/null
 
@@ -265,16 +327,16 @@ if [ ! -f /root/.borg-passphrase ]; then
   echo "⚠ EXTERN SICHERN — ohne sie ist das Backup unlesbar!"
 fi
 
-cat > /etc/mailcow-backup.conf <<CONF
-MAILCOW_DIR="{cfg["mailcow_dir"]}"
-BACKUP_LOCATION="/opt/mailcow-backups"
-BORG_REPO="{cfg["borg_repo"]}"
-BORG_SSH_PORT="{cfg["borg_ssh_port"]}"
-KEEP_DAILY="{cfg["keep_daily"]}"
-THREADS="{cfg["threads"]}"
-DASH_URL="{base}"
-DASH_TOKEN="{API_TOKEN}"
-CONF
+{{
+  printf 'MAILCOW_DIR=%q\\n' "$MAILCOW_DIR"
+  printf 'BACKUP_LOCATION=%q\\n' "/opt/mailcow-backups"
+  printf 'BORG_REPO=%q\\n' "$BORG_REPO"
+  printf 'BORG_SSH_PORT=%q\\n' "$BORG_SSH_PORT"
+  printf 'KEEP_DAILY=%q\\n' "$KEEP_DAILY"
+  printf 'THREADS=%q\\n' "$THREADS"
+  printf 'DASH_URL=%q\\n' "$DASH_URL"
+  printf 'DASH_TOKEN=%q\\n' "$DASH_TOKEN"
+}} > /etc/mailcow-backup.conf
 chmod 600 /etc/mailcow-backup.conf
 
 cat > /usr/local/sbin/mailcow-backup.sh <<'AGENT_EOF'
@@ -288,12 +350,12 @@ chmod 644 /etc/cron.d/mailcow-backup
 echo ""
 echo "── Noch zu tun ──"
 echo "1) SSH-Key am Backup-Ziel hinterlegen (falls noch nicht):"
-echo "   ssh -p{cfg["borg_ssh_port"]} {cfg["borg_repo"].split(":")[0]} install-ssh-key < /root/.ssh/id_ed25519.pub"
+printf '   ssh -p%s %q install-ssh-key < /root/.ssh/id_ed25519.pub\\n' "$BORG_SSH_PORT" "${{BORG_REPO%%:*}}"
 echo "   Key: $(cat /root/.ssh/id_ed25519.pub)"
 echo "2) Repo initialisieren (nur beim ersten Mal):"
-echo "   export BORG_PASSPHRASE=\\$(cat /root/.borg-passphrase); export BORG_RSH='ssh -p{cfg["borg_ssh_port"]}'"
-echo "   borg init --encryption=repokey-blake2 '{cfg["borg_repo"]}'"
-echo "   borg key export '{cfg["borg_repo"]}' /root/borg-key-backup.txt"
+printf "   export BORG_PASSPHRASE=\\$(cat /root/.borg-passphrase); export BORG_RSH='ssh -p%s'\\n" "$BORG_SSH_PORT"
+printf '   borg init --encryption=repokey-blake2 %q\\n' "$BORG_REPO"
+printf '   borg key export %q /root/borg-key-backup.txt\\n' "$BORG_REPO"
 echo "3) Testlauf: /usr/local/sbin/mailcow-backup.sh"
 echo ""
 echo "✔ Enrollment abgeschlossen — Cron: täglich {cfg["hour"]}:00 Uhr"
@@ -301,8 +363,9 @@ echo "✔ Enrollment abgeschlossen — Cron: täglich {cfg["hour"]}:00 Uhr"
 
 
 @app.get("/agent/script", response_class=PlainTextResponse)
-async def agent_script():
+async def agent_script(authorization: str = Header(default="")):
     """Latest agent script — used by agents for self-updates."""
+    require_token(authorization, API_TOKEN)
     try:
         return open(AGENT_SCRIPT).read()
     except OSError:
@@ -312,59 +375,123 @@ async def agent_script():
 # ── Einstellungen / Updater ─────────────────────────────────────────────────
 REPO_DIR = os.environ.get("REPO_DIR", "/opt/mailcow-backup-dashboard")
 UPDATE_LOG = "/var/log/backupdash-update.log"
+VERSION_CACHE_SECONDS = 20
+_version_cache = {"expires": 0.0, "value": None}
+_version_lock = asyncio.Lock()
 
 
-def _git(*args):
+def _git(*args, timeout=30):
+    env = os.environ.copy()
+    env["GIT_TERMINAL_PROMPT"] = "0"
     try:
-        return subprocess.run(["git", "-C", REPO_DIR, *args],
-                              capture_output=True, text=True, timeout=60).stdout.strip()
-    except Exception:
-        return ""
+        result = subprocess.run(
+            ["git", "-C", REPO_DIR, *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"git konnte nicht ausgeführt werden: {exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip().splitlines()
+        raise RuntimeError((detail[-1] if detail else "git command failed")[:300])
+    return result.stdout.strip()
 
 
-@app.get("/api/settings/version")
-async def version(authorization: str = Header(default="")):
-    if not API_TOKEN or authorization != f"Bearer {API_TOKEN}":
-        raise HTTPException(401, "invalid token")
-    local = _git("log", "-1", "--format=%h|%cd|%s", "--date=format:%d.%m.%Y %H:%M")
-    _git("fetch", "-q", "origin")
-    remote = _git("log", "-1", "--format=%h|%cd|%s", "--date=format:%d.%m.%Y %H:%M", "origin/main")
-    behind = _git("rev-list", "--count", "HEAD..origin/main")
-    parts_l = (local.split("|") + ["", "", ""])[:3]
-    parts_r = (remote.split("|") + ["", "", ""])[:3]
+def _commit_info(raw: str):
+    parts = (raw.split("|", 2) + ["", "", ""])[:3]
+    return {"commit": parts[0], "date": parts[1], "subject": parts[2]}
+
+
+def _collect_version():
+    if not os.path.exists(os.path.join(REPO_DIR, ".git")):
+        raise RuntimeError(f"kein Git-Repository unter {REPO_DIR}")
+    local = _git("log", "-1", "--format=%h|%cd|%s",
+                 "--date=format:%d.%m.%Y %H:%M")
+    _git("fetch", "-q", "origin", timeout=30)
+    remote = _git("log", "-1", "--format=%h|%cd|%s",
+                  "--date=format:%d.%m.%Y %H:%M", "origin/main")
+    behind = int(_git("rev-list", "--count", "HEAD..origin/main") or 0)
     return {
         "repo_dir": REPO_DIR,
-        "installed": {"commit": parts_l[0], "date": parts_l[1], "subject": parts_l[2]},
-        "latest": {"commit": parts_r[0], "date": parts_r[1], "subject": parts_r[2]},
-        "behind": int(behind or 0),
-        "update_available": bool(behind and int(behind) > 0),
+        "installed": _commit_info(local),
+        "latest": _commit_info(remote),
+        "behind": behind,
+        "update_available": behind > 0,
         "stale_hours": STALE_HOURS,
     }
 
 
+def _invalidate_version_cache():
+    _version_cache["expires"] = 0.0
+    _version_cache["value"] = None
+
+
+@app.get("/api/settings/version")
+async def version(authorization: str = Header(default="")):
+    require_token(authorization, ADMIN_TOKEN)
+    now = time.monotonic()
+    if _version_cache["value"] is not None and now < _version_cache["expires"]:
+        return _version_cache["value"]
+    async with _version_lock:
+        now = time.monotonic()
+        if _version_cache["value"] is not None and now < _version_cache["expires"]:
+            return _version_cache["value"]
+        try:
+            value = await asyncio.to_thread(_collect_version)
+        except RuntimeError as exc:
+            raise HTTPException(503, f"Versionsprüfung fehlgeschlagen: {exc}")
+        _version_cache["value"] = value
+        _version_cache["expires"] = time.monotonic() + VERSION_CACHE_SECONDS
+        return value
+
+
+def _start_update(script: str):
+    try:
+        result = subprocess.run(
+            ["systemd-run", "--quiet", "--collect", "--unit=backupdash-update",
+             "bash", script],
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"Updater konnte nicht gestartet werden: {exc}") from exc
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout).strip()
+        raise RuntimeError(detail[:500] or "systemd-run ist fehlgeschlagen")
+
+
 @app.post("/api/settings/update")
 async def run_update(authorization: str = Header(default="")):
-    if not API_TOKEN or authorization != f"Bearer {API_TOKEN}":
-        raise HTTPException(401, "invalid token")
-    script = os.path.join(REPO_DIR, "update.sh")
-    if not os.path.exists(script):
+    require_token(authorization, ADMIN_TOKEN)
+    repo_dir = os.path.realpath(REPO_DIR)
+    script = os.path.realpath(os.path.join(repo_dir, "update.sh"))
+    if os.path.dirname(script) != repo_dir or not os.path.isfile(script):
         raise HTTPException(500, f"update.sh nicht gefunden unter {REPO_DIR}")
-    # Update entkoppelt starten — der Dienst wird dabei neu gestartet,
-    # daher nicht auf das Ergebnis warten (die UI pollt danach /version).
-    subprocess.Popen(["systemd-run", "--unit=backupdash-update",
-                      "--collect", "bash", script],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return {"ok": True, "message": "Update gestartet — Dienst startet gleich neu."}
+    try:
+        await asyncio.to_thread(_start_update, script)
+    except RuntimeError as exc:
+        status = 409 if "already exists" in str(exc).lower() else 500
+        raise HTTPException(status, str(exc))
+    _invalidate_version_cache()
+    return JSONResponse(
+        {"ok": True, "message": "Update gestartet — Dienst startet gleich neu."},
+        status_code=202,
+    )
+
+
+def _read_update_log():
+    with open(UPDATE_LOG, errors="replace") as log_file:
+        return "".join(deque(log_file, maxlen=40))
 
 
 @app.get("/api/settings/update-log")
 async def update_log(authorization: str = Header(default="")):
-    if not API_TOKEN or authorization != f"Bearer {API_TOKEN}":
-        raise HTTPException(401, "invalid token")
+    require_token(authorization, ADMIN_TOKEN)
     try:
-        with open(UPDATE_LOG) as f:
-            lines = f.readlines()[-40:]
-        return PlainTextResponse("".join(lines))
+        return PlainTextResponse(await asyncio.to_thread(_read_update_log))
     except OSError:
         return PlainTextResponse("(noch kein Update-Log vorhanden)")
 

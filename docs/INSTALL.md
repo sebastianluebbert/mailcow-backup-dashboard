@@ -18,15 +18,23 @@ bash install-server.sh
 
 Der Installer:
 1. installiert Python-venv + FastAPI/uvicorn
-2. erzeugt einen **API-Token** (`/etc/backupdash.token`) — wird für alle Agents benötigt
-3. richtet den systemd-Dienst `backupdash` ein (Port frei wählbar, Standard 8080)
+2. erzeugt einen **Agent-Token** (`/etc/backupdash.token`) für Backup-Reports
+3. erzeugt einen getrennten **Admin-Token** (`/etc/backupdash.admin.token`) für
+   Peer-Verwaltung und Systemupdates
+4. richtet den systemd-Dienst `backupdash` ein (Port frei wählbar, Standard 8080)
 
 Danach erreichbar unter `http://<host>:8080`.
 
+Beim ersten Öffnen von **Peers** oder **Einstellungen** fragt die UI nach dem
+Admin-Token. Standardmäßig bleibt er nur für die aktuelle Browser-Sitzung
+gespeichert. Für produktiven Betrieb sollte vor dem Dashboard ein
+TLS-terminierender Reverse-Proxy stehen.
+
 ### Uptime-Kuma-Anbindung (optional)
 
-HTTP-Monitor auf `http://<host>:8080/api/health` — liefert **200** nur wenn alle
-Server grün sind, sonst **503**. So alarmiert Kuma bei jedem Backup-Problem.
+HTTP-Monitor auf `http://<host>:8080/api/health` — liefert **200** nur wenn
+mindestens ein Server registriert und jeder Server grün ist, sonst **503**.
+So alarmiert Kuma auch bei einer leeren oder fehlerhaften Installation.
 
 ## 2. Backup-Ziel vorbereiten (Beispiel Hetzner Storage Box)
 
@@ -44,7 +52,7 @@ ssh -p23 uXXXXXX@uXXXXXX.your-storagebox.de install-ssh-key < /root/.ssh/id_ed25
 ### Weg A: Peer-Onboarding über das Dashboard (empfohlen, NetBird-Style)
 
 1. Im Dashboard → **Peers** → „Neuen Peer anlegen" (Name, Borg-Ziel, Aufbewahrung, Uhrzeit)
-   — beim ersten Aufruf wird der Admin-Token abgefragt (`/etc/backupdash.token`)
+   — beim ersten Aufruf wird der Admin-Token abgefragt (`/etc/backupdash.admin.token`)
 2. Den erzeugten **Enrollment-Befehl** kopieren und auf dem Mailcow-Server als root ausführen:
    ```bash
    curl -fsSL http://<dashboard>:8080/enroll/<key> | bash
@@ -68,7 +76,7 @@ Der Installer fragt interaktiv:
 | SSH-Port | `23` (Hetzner) bzw. `22` |
 | Aufbewahrung | `7` (Tagesstände) |
 | Dashboard-URL | `http://<dashboard-ip>:8080` |
-| Dashboard-Token | Inhalt von `/etc/backupdash.token` auf dem Dashboard-Host |
+| Dashboard-Token | Agent-Token aus `/etc/backupdash.token` auf dem Dashboard-Host |
 | Uhrzeit | `3` (= täglich 3:00) |
 
 Er übernimmt dann automatisch: Borg-Installation, Passphrase-Erzeugung,
@@ -96,3 +104,21 @@ Ohne diese zwei Dinge ist **kein Restore** möglich — extern sichern (Passwort
 `/etc/mailcow-backup.conf` auf dem jeweiligen Server anpassen (Aufbewahrung,
 Threads, Dashboard-URL etc.) — wirkt beim nächsten Lauf. Uhrzeit in
 `/etc/cron.d/mailcow-backup`.
+
+## Dashboard aktualisieren
+
+Unter **Einstellungen** zeigt die Oberfläche den installierten und den neuesten
+Commit. „Update installieren" startet den bestehenden Updater entkoppelt über
+systemd; die UI wartet auf den Neustart und zeigt anschließend das Update-Log.
+
+Alternativ auf dem Dashboard-Host:
+
+```bash
+cd /opt/mailcow-backup-dashboard
+bash update.sh
+```
+
+Bei älteren Installationen ohne `DASH_ADMIN_TOKEN` bleibt aus
+Kompatibilitätsgründen der bisherige Agent-Token auch Admin-Token. Für eine
+saubere Token-Trennung den aktuellen `server/install-server.sh` erneut ausführen;
+vorhandene Tokens und Daten werden dabei beibehalten.

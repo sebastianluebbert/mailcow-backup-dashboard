@@ -10,15 +10,18 @@ read -rp "HTTP-Port [8080]: " PORT; PORT=${PORT:-8080}
 
 APP=/opt/backupdash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
 echo "→ Pakete…"
-apt-get update -qq && apt-get install -y -qq python3-venv curl >/dev/null
+apt-get update -qq && apt-get install -y -qq python3-venv curl git >/dev/null
 
 echo "→ Dateien nach $APP…"
 mkdir -p "$APP/data" "$APP/agent"
 cp "$SCRIPT_DIR/app.py" "$APP/"
 mkdir -p "$APP/static"
-cp "$SCRIPT_DIR/static/index.html" "$APP/static/"
+install -m 644 "$SCRIPT_DIR/static/index.html" "$APP/static/index.html"
+install -m 644 "$SCRIPT_DIR/static/styles.css" "$APP/static/styles.css"
+install -m 644 "$SCRIPT_DIR/static/app.js" "$APP/static/app.js"
 # Agent-Skript fürs Enrollment mitliefern
 if [ -f "$SCRIPT_DIR/../agent/mailcow-backup.sh" ]; then
   cp "$SCRIPT_DIR/../agent/mailcow-backup.sh" "$APP/agent/"
@@ -37,6 +40,15 @@ else
   chmod 600 /etc/backupdash.token
 fi
 
+if [ -f /etc/backupdash.admin.token ]; then
+  ADMIN_TOKEN=$(cat /etc/backupdash.admin.token)
+  echo "→ Bestehender Admin-Token wird weiterverwendet."
+else
+  ADMIN_TOKEN=$(openssl rand -hex 24)
+  echo "$ADMIN_TOKEN" > /etc/backupdash.admin.token
+  chmod 600 /etc/backupdash.admin.token
+fi
+
 echo "→ systemd-Service…"
 cat > /etc/systemd/system/backupdash.service <<EOF
 [Unit]
@@ -44,7 +56,9 @@ Description=Mailcow Backup Dashboard
 After=network.target
 
 [Service]
-Environment=DASH_TOKEN=$TOKEN
+Environment="DASH_TOKEN=$TOKEN"
+Environment="DASH_ADMIN_TOKEN=$ADMIN_TOKEN"
+Environment="REPO_DIR=$REPO_DIR"
 WorkingDirectory=$APP
 ExecStart=$APP/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PORT
 Restart=always
@@ -60,8 +74,9 @@ sleep 2
 if curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 || [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$PORT/)" = 200 ]; then
   echo ""
   echo "✔ Dashboard läuft: http://$(hostname -I | awk '{print $1}'):$PORT"
-  echo "  API-Token (für Agents): $TOKEN"
-  echo "  Token-Datei: /etc/backupdash.token"
+  echo "  Agent-Token: $TOKEN"
+  echo "  Admin-Token (für die UI): $ADMIN_TOKEN"
+  echo "  Token-Dateien: /etc/backupdash.token und /etc/backupdash.admin.token"
 else
   echo "⚠ Dienst prüfen: systemctl status backupdash"
 fi
