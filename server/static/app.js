@@ -23,6 +23,8 @@
       repo_total_gb: 0,
       runs_24h: 0,
       fails_7d: 0,
+      verify_fails_30d: 0,
+      watchdog_fails_24h: 0,
     },
     online: false,
     initialized: false,
@@ -140,6 +142,32 @@
   const statusInfo = (value) => STATUS[value] || STATUS.error;
   const shortHost = (hostname) => String(hostname || "Unbekannt").split(".")[0];
   const initials = (hostname) => shortHost(hostname).slice(0, 2);
+
+  function renderCheckCard(title, check) {
+    if (!check) {
+      return `
+        <article class="check-card">
+          <div class="check-card-head"><span>${escapeHtml(title)}</span><span class="status-badge is-neutral">Ausstehend</span></div>
+          <p class="check-card-meta">Noch keine Meldung erhalten.</p>
+        </article>`;
+    }
+    const info = statusInfo(check.state);
+    const detail = check.last_message || (check.last_status === "ok" ? "Erfolgreich" : "Fehler ohne Meldung");
+    return `
+      <article class="check-card">
+        <div class="check-card-head"><span>${escapeHtml(title)}</span><span class="status-badge ${info.className}">${info.label}</span></div>
+        <p class="check-card-meta">Zuletzt ${escapeHtml(formatAgo(check.last_ts))} · ${escapeHtml(detail)}</p>
+      </article>`;
+  }
+
+  function renderComponentPills(components) {
+    if (!components || typeof components !== "object") return "";
+    return Object.entries(components).map(([name, info]) => {
+      const present = info && info.present;
+      const value = present ? formatGb(asNumber(info.bytes, 0) / 1073741824) : "fehlt";
+      return `<span class="meta-pill">${escapeHtml(name)}: <strong>${escapeHtml(value)}</strong></span>`;
+    }).join("");
+  }
   const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
   function setPageMeta(title, eyebrow) {
@@ -535,6 +563,8 @@
         ${metricCard("Speicher", formatGb(summary.repo_total_gb), "Alle Borg-Repositories")}
         ${metricCard("Läufe · 24 h", String(asNumber(summary.runs_24h)), "Empfangene Reports")}
         ${metricCard("Fehler · 7 Tage", String(asNumber(summary.fails_7d)), "Fehlgeschlagene Läufe", asNumber(summary.fails_7d) ? "is-danger" : "", asNumber(summary.fails_7d) ? "is-danger" : "")}
+        ${metricCard("Verify-Fehler · 30 T", String(asNumber(summary.verify_fails_30d)), "Fehlgeschlagene Restore-Tests", asNumber(summary.verify_fails_30d) ? "is-warning" : "", asNumber(summary.verify_fails_30d) ? "is-warning" : "")}
+        ${metricCard("Watchdog-Fehler · 24 h", String(asNumber(summary.watchdog_fails_24h)), "Health-Check-Warnungen", asNumber(summary.watchdog_fails_24h) ? "is-warning" : "", asNumber(summary.watchdog_fails_24h) ? "is-warning" : "")}
       </section>
 
       <section class="panel" aria-labelledby="fleet-title">
@@ -735,6 +765,7 @@
       <div class="detail-meta">
         <span class="meta-pill">Letzter Report: <strong>${escapeHtml(formatDateTime(latest.ts))}</strong></span>
         <span class="meta-pill">Historie: <strong>${history.length} Läufe</strong></span>
+        ${renderComponentPills(latest.components)}
       </div>
 
       <section class="detail-grid" aria-label="Verlaufsdiagramme">
@@ -774,6 +805,16 @@
           <div class="empty-state empty-state-compact">
             <div><span class="empty-state-icon" aria-hidden="true">✓</span><h3>Keine Fehler aufgezeichnet</h3><p>Für diesen Server liegen keine Fehlermeldungen vor.</p></div>
           </div>`}
+      </section>
+
+      <section class="panel" aria-labelledby="checks-title">
+        <div class="panel-header">
+          <div class="panel-title"><h3 id="checks-title">Zusätzliche Prüfungen</h3><p>Verify- und Watchdog-Agent der Suite</p></div>
+        </div>
+        <div class="checks-grid">
+          ${renderCheckCard("Verify-Agent (Restore-Test)", server.verify)}
+          ${renderCheckCard("Watchdog-Agent (Health-Check)", server.watchdog)}
+        </div>
       </section>`;
 
     renderDetailCharts(history);
@@ -939,6 +980,21 @@
                 <span>Mailcow-Verzeichnis</span>
                 <input name="mailcow_dir" value="/opt/mailcow-dockerized" required>
               </label>
+              <fieldset class="field field-wide components-field">
+                <legend>Backup-Komponenten</legend>
+                <label class="check-field">
+                  <input type="checkbox" id="component-all-toggle" name="component_all" checked>
+                  <span>Alle Komponenten (empfohlen)</span>
+                </label>
+                <div class="components-grid" id="componentsGrid">
+                  <label class="check-field"><input type="checkbox" name="component" value="vmail" disabled><span>vmail (Mailboxen)</span></label>
+                  <label class="check-field"><input type="checkbox" name="component" value="crypt" disabled><span>crypt (SSL/DKIM)</span></label>
+                  <label class="check-field"><input type="checkbox" name="component" value="redis" disabled><span>redis</span></label>
+                  <label class="check-field"><input type="checkbox" name="component" value="rspamd" disabled><span>rspamd</span></label>
+                  <label class="check-field"><input type="checkbox" name="component" value="postfix" disabled><span>postfix</span></label>
+                  <label class="check-field"><input type="checkbox" name="component" value="mysql" disabled><span>mysql / MariaDB</span></label>
+                </div>
+              </fieldset>
             </div>
             <p class="form-error" id="peer-form-error" role="alert"></p>
             <div class="form-actions">
@@ -955,6 +1011,15 @@
           <div id="peer-list">${renderPeerList(peers)}</div>
         </section>
       </div>`;
+
+    const allToggle = document.querySelector("#component-all-toggle");
+    const componentInputs = document.querySelectorAll('#componentsGrid input[name="component"]');
+    allToggle.addEventListener("change", () => {
+      componentInputs.forEach((input) => {
+        input.disabled = allToggle.checked;
+        if (allToggle.checked) input.checked = false;
+      });
+    });
   }
 
   function renderPeerList(peers) {
@@ -973,7 +1038,7 @@
               <tr>
                 <td>
                   <span class="peer-name">${escapeHtml(peer.name)}</span>
-                  <small class="secondary-line">${escapeHtml(formatDateTime(peer.created_ts))}</small>
+                  <small class="secondary-line">${escapeHtml(formatDateTime(peer.created_ts))} · ${escapeHtml(peer.config?.backup_components || "all")}</small>
                 </td>
                 <td><span class="status-badge ${peer.enrolled_ts ? "is-ok" : "is-stale"}">${peer.enrolled_ts ? "Abgerufen" : "Ausstehend"}</span></td>
                 <td class="mono repo-cell hide-mobile" title="${escapeHtml(peer.config?.borg_repo || "")}">${escapeHtml(peer.config?.borg_repo || "–")}</td>
@@ -1021,6 +1086,10 @@
     if (!form.reportValidity()) return;
 
     const data = new FormData(form);
+    const componentAll = form.querySelector('input[name="component_all"]').checked;
+    const selectedComponents = componentAll
+      ? ["all"]
+      : Array.from(form.querySelectorAll('input[name="component"]:checked')).map((el) => el.value);
     const body = {
       name: String(data.get("name") || "").trim(),
       borg_repo: String(data.get("borg_repo") || "").trim(),
@@ -1029,6 +1098,7 @@
       hour: Number(data.get("hour")),
       mailcow_dir: String(data.get("mailcow_dir") || "").trim(),
       threads: Number(data.get("threads")),
+      backup_components: selectedComponents.length ? selectedComponents.join(",") : "all",
     };
 
     submit.disabled = true;
