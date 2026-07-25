@@ -288,7 +288,8 @@ async def enroll(key: str, request: Request):
     cfg = _json.loads(row["config"])
     base = str(request.base_url).rstrip("/")
     try:
-        agent = open(AGENT_SCRIPT).read()
+        with open(AGENT_SCRIPT, encoding="utf-8") as agent_file:
+            agent = agent_file.read()
     except OSError:
         raise HTTPException(500, "agent script missing on server")
     with closing(db()) as conn:
@@ -373,7 +374,8 @@ async def agent_script(authorization: str = Header(default="")):
     """Latest agent script — used by agents for self-updates."""
     require_token(authorization, API_TOKEN)
     try:
-        return open(AGENT_SCRIPT).read()
+        with open(AGENT_SCRIPT, encoding="utf-8") as agent_file:
+            return agent_file.read()
     except OSError:
         raise HTTPException(500, "agent script missing on server")
 
