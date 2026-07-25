@@ -1,19 +1,22 @@
 #!/bin/bash
 # ============================================================================
-# Installer: Mailcow Backup Agent
+# Installer: Mailcow Backup Suite (Backup-, Verify- und Watchdog-Agent)
 # Verwendung (auf dem Mailcow-Server als root):
 #   bash install-agent.sh
-# Fragt alle Werte interaktiv ab und richtet Borg + Cron + Dashboard-Report ein.
+# Fragt alle Werte interaktiv ab und richtet Borg + Cron + Dashboard-Report
+# für alle drei Agents ein.
 # ============================================================================
 set -euo pipefail
 
 [ "$(id -u)" = 0 ] || { echo "Bitte als root ausführen."; exit 1; }
 
-echo "── Mailcow Backup Agent — Installation ──────────────────"
+echo "── Mailcow Backup Suite — Installation ───────────────────"
 
 read -rp "Storage-Box/Borg-Ziel (z.B. u123456@u123456.your-storagebox.de:backups/mailcow-borg): " BORG_REPO
 read -rp "SSH-Port des Ziels [23]: " BORG_SSH_PORT; BORG_SSH_PORT=${BORG_SSH_PORT:-23}
 read -rp "Aufbewahrung in Tagen [7]: " KEEP_DAILY; KEEP_DAILY=${KEEP_DAILY:-7}
+read -rp "Backup-Komponenten (vmail,crypt,redis,rspamd,postfix,mysql oder all) [all]: " BACKUP_COMPONENTS
+BACKUP_COMPONENTS=${BACKUP_COMPONENTS:-all}
 read -rp "Dashboard-URL (leer = kein Reporting, z.B. http://<dashboard-ip>:8080): " DASH_URL
 DASH_TOKEN=""
 [ -n "$DASH_URL" ] && read -rp "Dashboard-Agent-Token: " DASH_TOKEN
@@ -22,8 +25,15 @@ read -rp "mailcow-Verzeichnis [/opt/mailcow-dockerized]: " MAILCOW_DIR; MAILCOW_
 
 [ -f "$MAILCOW_DIR/helper-scripts/backup_and_restore.sh" ] || { echo "FEHLER: mailcow nicht unter $MAILCOW_DIR gefunden."; exit 1; }
 
+VALID_COMPONENTS="vmail crypt redis rspamd postfix mysql all"
+for c in ${BACKUP_COMPONENTS//,/ }; do
+  if [[ " $VALID_COMPONENTS " != *" $c "* ]]; then
+    echo "FEHLER: unbekannte Komponente '$c' (erlaubt: $VALID_COMPONENTS)"; exit 1
+  fi
+done
+
 echo "→ Pakete installieren…"
-apt-get update -qq && apt-get install -y -qq borgbackup curl >/dev/null
+apt-get update -qq && apt-get install -y -qq borgbackup curl zstd >/dev/null
 
 echo "→ SSH-Key prüfen…"
 [ -f /root/.ssh/id_ed25519 ] || ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519 -q
@@ -59,19 +69,33 @@ BORG_REPO="$BORG_REPO"
 BORG_SSH_PORT="$BORG_SSH_PORT"
 KEEP_DAILY="$KEEP_DAILY"
 THREADS="4"
+BACKUP_COMPONENTS="$BACKUP_COMPONENTS"
 DASH_URL="$DASH_URL"
 DASH_TOKEN="$DASH_TOKEN"
 EOF
 chmod 600 /etc/mailcow-backup.conf
 
-echo "→ Backup-Skript installieren…"
+echo "→ Suite-Bibliothek und Agents installieren…"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+mkdir -p /usr/local/lib/mailcow-backup-suite
+install -m 644 "$SCRIPT_DIR/lib/common.sh" /usr/local/lib/mailcow-backup-suite/common.sh
 install -m 700 "$SCRIPT_DIR/mailcow-backup.sh" /usr/local/sbin/mailcow-backup.sh
+install -m 700 "$SCRIPT_DIR/mailcow-verify.sh" /usr/local/sbin/mailcow-verify.sh
+install -m 700 "$SCRIPT_DIR/mailcow-watchdog.sh" /usr/local/sbin/mailcow-watchdog.sh
 
-echo "→ Cron einrichten (täglich ${HOUR}:00)…"
-echo "0 $HOUR * * * root /usr/local/sbin/mailcow-backup.sh" > /etc/cron.d/mailcow-backup
+echo "→ Cron einrichten…"
+VERIFY_HOUR=$(( (HOUR + 2) % 24 ))
+cat > /etc/cron.d/mailcow-backup <<CRON
+0 $HOUR * * * root /usr/local/sbin/mailcow-backup.sh
+15 * * * * root /usr/local/sbin/mailcow-watchdog.sh
+0 $VERIFY_HOUR * * 0 root /usr/local/sbin/mailcow-verify.sh
+CRON
 chmod 644 /etc/cron.d/mailcow-backup
 
 echo ""
-echo "✔ Fertig. Testlauf starten mit:  /usr/local/sbin/mailcow-backup.sh"
-echo "  Log: /var/log/mailcow-backup.log"
+echo "✔ Fertig. Testläufe:"
+echo "  Backup:   /usr/local/sbin/mailcow-backup.sh   (Log: /var/log/mailcow-backup.log)"
+echo "  Verify:   /usr/local/sbin/mailcow-verify.sh    (Log: /var/log/mailcow-verify.log)"
+echo "  Watchdog: /usr/local/sbin/mailcow-watchdog.sh  (Log: /var/log/mailcow-watchdog.log)"
+echo ""
+echo "Zeitplan: Backup täglich ${HOUR}:00, Verify sonntags ${VERIFY_HOUR}:00, Watchdog stündlich."
