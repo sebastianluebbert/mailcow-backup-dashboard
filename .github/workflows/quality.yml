@@ -36,7 +36,17 @@ jobs:
         run: node --check server/static/app.js
 
       - name: Validate shell scripts
-        run: bash -n agent/install-agent.sh agent/mailcow-backup.sh server/install-server.sh update.sh
+        run: |
+          bash -n agent/lib/common.sh agent/mailcow-backup.sh agent/mailcow-verify.sh \
+            agent/mailcow-watchdog.sh agent/install-agent.sh server/install-server.sh update.sh
+
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: Run shellcheck
+        run: |
+          shellcheck -S warning agent/lib/common.sh agent/mailcow-backup.sh agent/mailcow-verify.sh \
+            agent/mailcow-watchdog.sh agent/install-agent.sh server/install-server.sh update.sh
 
       - name: Run UI contract tests
         run: python -m unittest discover -s tests -v

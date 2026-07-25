@@ -83,6 +83,14 @@ class EnterpriseUiContractTests(unittest.TestCase):
             for asset in assets:
                 self.assertIn(asset, contents, f"{asset} missing from {script_path}")
 
+    def test_deploy_scripts_include_the_full_agent_suite(self):
+        suite_files = ("mailcow-backup.sh", "mailcow-verify.sh", "mailcow-watchdog.sh",
+                       "lib/common.sh")
+        for script_path in ("server/install-server.sh", "update.sh"):
+            contents = (ROOT / script_path).read_text(encoding="utf-8")
+            for asset in suite_files:
+                self.assertIn(asset, contents, f"{asset} missing from {script_path}")
+
     def test_backend_sets_browser_security_policy(self):
         app_source = (ROOT / "server" / "app.py").read_text(encoding="utf-8")
         for header in (
