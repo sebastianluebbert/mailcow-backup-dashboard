@@ -447,6 +447,7 @@ a {
 
 .button {
   padding: 8px 14px;
+  text-decoration: none;
 }
 
 .button-primary {
@@ -1638,14 +1639,6 @@ button:disabled {
 }
 
 @media (max-width: 470px) {
-  .metrics {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .metric-card:first-child {
-    grid-column: auto;
-  }
-
   .page-heading-actions {
     flex-direction: column;
   }

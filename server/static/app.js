@@ -507,10 +507,10 @@
     setPageMeta("Übersicht", "Monitoring");
     const summary = state.summary;
     const fleetStatus = asNumber(summary.error) > 0
-      ? { value: "Handlungsbedarf", detail: `${summary.error} Server mit Fehler`, tone: "is-danger", valueTone: "is-danger" }
+      ? { value: "Fehler", detail: `${summary.error} Server mit Fehler`, tone: "is-danger", valueTone: "is-danger" }
       : asNumber(summary.stale) > 0
         ? { value: "Prüfen", detail: `${summary.stale} Server überfällig`, tone: "is-warning", valueTone: "is-warning" }
-        : { value: "Betriebsbereit", detail: `${summary.ok}/${summary.servers} Server gesund`, tone: "is-success", valueTone: "is-success" };
+        : { value: "Gesund", detail: `${summary.ok}/${summary.servers} Server gesund`, tone: "is-success", valueTone: "is-success" };
 
     dom.main.innerHTML = `
       <section class="page-heading">

@@ -285,15 +285,21 @@ async def enroll(key: str, request: Request):
         ).fetchone()
         if not row:
             raise HTTPException(404, "unknown or already used enrollment key")
-        conn.execute("UPDATE peers SET enrolled_ts=? WHERE enroll_key=?",
-                     (int(time.time()), key))
-        conn.commit()
     cfg = _json.loads(row["config"])
     base = str(request.base_url).rstrip("/")
     try:
         agent = open(AGENT_SCRIPT).read()
     except OSError:
         raise HTTPException(500, "agent script missing on server")
+    with closing(db()) as conn:
+        cursor = conn.execute(
+            "UPDATE peers SET enrolled_ts=?"
+            " WHERE enroll_key=? AND enrolled_ts IS NULL",
+            (int(time.time()), key),
+        )
+        conn.commit()
+        if cursor.rowcount != 1:
+            raise HTTPException(404, "enrollment key was already used")
     peer_name = shlex.quote(row["name"])
     mailcow_dir = shlex.quote(cfg["mailcow_dir"])
     borg_repo = shlex.quote(cfg["borg_repo"])
