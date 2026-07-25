@@ -32,8 +32,13 @@ fi
 
 echo "Update: $BEFORE -> $AFTER"
 
+# Abhängigkeiten vor dem Dateitausch installieren. Ein Paketfehler lässt damit
+# den weiterhin laufenden Stand unverändert.
+"$APP/venv/bin/pip" install -q -r server/requirements.txt
+
 # Server-Dateien deployen
 install -m 644 server/app.py            "$APP/app.py"
+install -m 644 server/requirements.txt   "$APP/requirements.txt"
 install -m 644 server/static/index.html "$APP/static/index.html"
 install -m 644 server/static/styles.css "$APP/static/styles.css"
 install -m 644 server/static/app.js     "$APP/static/app.js"
@@ -48,9 +53,6 @@ Environment="REPO_DIR=$REPO_DIR"
 EOF
 systemctl daemon-reload
 
-# Abhängigkeiten still nachziehen (falls neue dazukamen)
-"$APP/venv/bin/pip" install -q fastapi 'uvicorn[standard]' pydantic 2>/dev/null || true
-
 systemctl restart backupdash
 sleep 2
 if systemctl is-active -q backupdash; then
@@ -60,9 +62,20 @@ else
   git reset -q --hard "$BEFORE"
   install -m 644 server/app.py            "$APP/app.py"
   install -m 644 server/static/index.html "$APP/static/index.html"
-  install -m 644 server/static/styles.css "$APP/static/styles.css"
-  install -m 644 server/static/app.js     "$APP/static/app.js"
   install -m 644 agent/mailcow-backup.sh  "$APP/agent/mailcow-backup.sh"
+  if [ -f server/static/styles.css ]; then
+    install -m 644 server/static/styles.css "$APP/static/styles.css"
+    install -m 644 server/static/app.js     "$APP/static/app.js"
+  else
+    rm -f "$APP/static/styles.css" "$APP/static/app.js"
+  fi
+  if [ -f server/requirements.txt ]; then
+    install -m 644 server/requirements.txt "$APP/requirements.txt"
+    "$APP/venv/bin/pip" install -q -r "$APP/requirements.txt"
+  else
+    rm -f "$APP/requirements.txt"
+    "$APP/venv/bin/pip" install -q fastapi 'uvicorn[standard]' pydantic
+  fi
   systemctl restart backupdash
   exit 1
 fi

@@ -18,6 +18,7 @@ apt-get update -qq && apt-get install -y -qq python3-venv curl git >/dev/null
 echo "→ Dateien nach $APP…"
 mkdir -p "$APP/data" "$APP/agent"
 cp "$SCRIPT_DIR/app.py" "$APP/"
+install -m 644 "$SCRIPT_DIR/requirements.txt" "$APP/requirements.txt"
 mkdir -p "$APP/static"
 install -m 644 "$SCRIPT_DIR/static/index.html" "$APP/static/index.html"
 install -m 644 "$SCRIPT_DIR/static/styles.css" "$APP/static/styles.css"
@@ -29,7 +30,7 @@ fi
 
 echo "→ Python-Umgebung…"
 python3 -m venv "$APP/venv"
-"$APP/venv/bin/pip" install -q fastapi 'uvicorn[standard]' pydantic
+"$APP/venv/bin/pip" install -q -r "$APP/requirements.txt"
 
 if [ -f /etc/backupdash.token ]; then
   TOKEN=$(cat /etc/backupdash.token)
