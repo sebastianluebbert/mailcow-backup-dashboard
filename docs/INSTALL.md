@@ -47,18 +47,24 @@ ssh-keygen -t ed25519 -N "" -f /root/.ssh/id_ed25519   # falls noch keiner exist
 ssh -p23 uXXXXXX@uXXXXXX.your-storagebox.de install-ssh-key < /root/.ssh/id_ed25519.pub
 ```
 
-## 3. Agent auf jedem Mailcow-Server
+## 3. Agent-Suite auf jedem Mailcow-Server
+
+Installiert wird immer die komplette Suite: Backup-, Verify- und
+Watchdog-Agent samt gemeinsamer Bibliothek. Details zu den einzelnen Agents:
+[docs/AGENTS.md](AGENTS.md).
 
 ### Weg A: Peer-Onboarding über das Dashboard (empfohlen, NetBird-Style)
 
-1. Im Dashboard → **Peers** → „Neuen Peer anlegen" (Name, Borg-Ziel, Aufbewahrung, Uhrzeit)
-   — beim ersten Aufruf wird der Admin-Token abgefragt (`/etc/backupdash.admin.token`)
+1. Im Dashboard → **Peers** → „Neuen Peer anlegen" (Name, Borg-Ziel, Aufbewahrung,
+   Uhrzeit, Backup-Komponenten) — beim ersten Aufruf wird der Admin-Token
+   abgefragt (`/etc/backupdash.admin.token`)
 2. Den erzeugten **Enrollment-Befehl** kopieren und auf dem Mailcow-Server als root ausführen:
    ```bash
    curl -fsSL http://<dashboard>:8080/enroll/<key> | bash
    ```
-3. Das Skript installiert Borg, Konfig, Agent + Cron und zeigt die restlichen Schritte an
-   (SSH-Key am Ziel hinterlegen, `borg init`, Testlauf).
+3. Das Skript installiert Borg, Konfig, die komplette Agent-Suite + drei Cron-Einträge
+   (Backup täglich, Watchdog stündlich, Verify wöchentlich) und zeigt die restlichen
+   Schritte an (SSH-Key am Ziel hinterlegen, `borg init`, Testläufe).
 
 ### Weg B: Interaktiver Installer (ohne Dashboard-Zugriff)
 
@@ -75,22 +81,26 @@ Der Installer fragt interaktiv:
 | Borg-Ziel | `uXXXXXX@uXXXXXX.your-storagebox.de:backups/<server>-borg` |
 | SSH-Port | `23` (Hetzner) bzw. `22` |
 | Aufbewahrung | `7` (Tagesstände) |
+| Backup-Komponenten | `all` oder z. B. `vmail,mysql,crypt` |
 | Dashboard-URL | `http://<dashboard-ip>:8080` |
 | Dashboard-Token | Agent-Token aus `/etc/backupdash.token` auf dem Dashboard-Host |
-| Uhrzeit | `3` (= täglich 3:00) |
+| Uhrzeit | `3` (= täglich 3:00, Verify folgt sonntags 2h später, Watchdog stündlich) |
 
 Er übernimmt dann automatisch: Borg-Installation, Passphrase-Erzeugung,
 Repo-Init (verschlüsselt), Key-Export, Konfig (`/etc/mailcow-backup.conf`),
-Skript (`/usr/local/sbin/mailcow-backup.sh`) und Cron (`/etc/cron.d/mailcow-backup`).
+die Suite unter `/usr/local/sbin/` und `/usr/local/lib/mailcow-backup-suite/`
+sowie drei Einträge in `/etc/cron.d/mailcow-backup`.
 
-### Testlauf
+### Testläufe
 
 ```bash
-/usr/local/sbin/mailcow-backup.sh
-tail -f /var/log/mailcow-backup.log
+/usr/local/sbin/mailcow-backup.sh   ; tail -f /var/log/mailcow-backup.log
+/usr/local/sbin/mailcow-verify.sh   ; tail -f /var/log/mailcow-verify.log
+/usr/local/sbin/mailcow-watchdog.sh ; tail -f /var/log/mailcow-watchdog.log
 ```
 
-Nach Abschluss erscheint der Server automatisch im Dashboard.
+Nach dem ersten Backup-Lauf erscheint der Server automatisch im Dashboard;
+Verify- und Watchdog-Status erscheinen dort auf der Server-Detailseite.
 
 ## 4. ⚠ Schlüssel sichern (PFLICHT)
 
@@ -102,8 +112,9 @@ Ohne diese zwei Dinge ist **kein Restore** möglich — extern sichern (Passwort
 ## Konfiguration ändern
 
 `/etc/mailcow-backup.conf` auf dem jeweiligen Server anpassen (Aufbewahrung,
-Threads, Dashboard-URL etc.) — wirkt beim nächsten Lauf. Uhrzeit in
-`/etc/cron.d/mailcow-backup`.
+Komponenten, Threads, Dashboard-URL, Watchdog-Schwellen etc.) — wirkt beim
+nächsten Lauf des jeweiligen Agents. Zeitplan in `/etc/cron.d/mailcow-backup`.
+Vollständige Variablenreferenz: [docs/AGENTS.md](AGENTS.md#konfigurationsreferenz-etcmailcow-backupconf).
 
 ## Dashboard aktualisieren
 

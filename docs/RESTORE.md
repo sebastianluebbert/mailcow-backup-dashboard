@@ -75,3 +75,18 @@ docker compose exec dovecot-mailcow doveadm force-resync -u <user>@<domain> '*'
 
 Mindestens `borg list` + Probe-Extraktion einer kleinen Datei — nur ein
 getestetes Backup ist ein Backup.
+
+### Automatisierter Verify-Agent (ergänzend, kein Ersatz)
+
+Die Agent-Suite bringt einen **Verify-Agent** mit, der wöchentlich automatisch
+das jüngste Archiv extrahiert und die Integrität jeder Komponente prüft (siehe
+[docs/AGENTS.md](AGENTS.md#verify-agent-mailcow-verifysh)). Das bestätigt, dass
+die Archivdateien lesbar sind — **nicht**, dass eine vollständige
+Wiederherstellung tatsächlich funktioniert. Die manuelle, quartalsweise
+Restore-Probe aus diesem Dokument bleibt weiterhin notwendig.
+
+```bash
+# Manueller Testlauf des Verify-Agents:
+/usr/local/sbin/mailcow-verify.sh
+tail -f /var/log/mailcow-verify.log
+```

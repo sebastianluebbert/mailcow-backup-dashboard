@@ -12,6 +12,26 @@
 | `no space left on device` lokal | `/opt/mailcow-backups` wird vor dem Upload angelegt (~1× Datenvolumen nötig). Platz schaffen oder `BACKUP_LOCATION` auf größeres Volume legen |
 | Storage Box voll | Aufbewahrung senken (`KEEP_DAILY` in `/etc/mailcow-backup.conf`), dann `borg prune` + `borg compact` manuell |
 | Docker-Build/DNS-Fehler nach Firewall-Härtung | Docker-Bridges müssen am Host erlaubt sein (nftables: `iifname { "docker0", "br-*" } accept`) |
+| `unbekannte BACKUP_COMPONENTS-Komponente '…'` | Tippfehler in `/etc/mailcow-backup.conf` — erlaubt: `vmail,crypt,redis,rspamd,postfix,mysql,all` |
+| mysql-Komponente fehlt im Backup | mailcow konnte das SQL-Image nicht bestimmen (`SQLIMAGE` leer) — `docker compose config` bzw. mailcow-Update prüfen |
+
+## Verify-Agent
+
+| Symptom | Ursache / Lösung |
+|---------|------------------|
+| `keine Archive im Repo gefunden` | Es lief noch kein erfolgreicher Backup-Lauf — zuerst `mailcow-backup.sh` testen |
+| `<komponente>-Archiv ist beschädigt (zstd -t fehlgeschlagen)` | Übertragungsfehler oder abgebrochener Backup-Lauf — nächsten Backup-Lauf abwarten und erneut prüfen; bei wiederholtem Auftreten `borg check` erwägen |
+| `zstd: command not found` (Integritätsprüfung übersprungen) | `apt-get install zstd` auf dem Mailcow-Server nachholen |
+| Verify läuft sehr lange | Großes vmail-Archiv wird komplett extrahiert — normal bei großen Mailboxen; Log via `tail -f /var/log/mailcow-verify.log` beobachten |
+
+## Watchdog-Agent
+
+| Symptom | Ursache / Lösung |
+|---------|------------------|
+| `Speicherplatz knapp/kritisch` | `KEEP_DAILY` senken, `borg prune`/`compact` ausführen, oder `BACKUP_LOCATION` auf größeres Volume legen |
+| `Borg-Ziel nicht erreichbar` | SSH-Port/Firewall/Egress prüfen (siehe oben), Storage-Box-Status im Robot |
+| `Kein erfolgreiches Backup seit …h` | Backup-Cron/-Agent prüfen; diese Meldung basiert auf `/var/log/mailcow-backup.state`, unabhängig vom Dashboard |
+| `Mailcow-Container watchdog-mailcow läuft nicht` | Mailcow-Stack prüfen: `docker compose ps` im mailcow-Verzeichnis |
 
 ## Dashboard
 
@@ -26,11 +46,15 @@
 ## Nützliche Kommandos
 
 ```bash
-# Läuft gerade ein Backup?
+# Läuft gerade ein Agent?
 pgrep -af mailcow-backup.sh
+pgrep -af mailcow-verify.sh
+pgrep -af mailcow-watchdog.sh
 
 # Letzte Log-Zeilen
 tail -50 /var/log/mailcow-backup.log
+tail -50 /var/log/mailcow-verify.log
+tail -50 /var/log/mailcow-watchdog.log
 
 # Repo-Zustand & Größen
 export BORG_PASSPHRASE=$(cat /root/.borg-passphrase); export BORG_RSH="ssh -p23"
@@ -40,11 +64,17 @@ borg list  <REPO>
 # Konsistenz-Check (dauert!)
 borg check <REPO>
 
-# Manueller Lauf mit Live-Ausgabe
-/usr/local/sbin/mailcow-backup.sh & tail -f /var/log/mailcow-backup.log
+# Manuelle Läufe mit Live-Ausgabe
+/usr/local/sbin/mailcow-backup.sh   & tail -f /var/log/mailcow-backup.log
+/usr/local/sbin/mailcow-verify.sh   & tail -f /var/log/mailcow-verify.log
+/usr/local/sbin/mailcow-watchdog.sh & tail -f /var/log/mailcow-watchdog.log
 ```
 
 ## Monitoring-Tipps
 
-- Uptime-Kuma → HTTP-Monitor auf `/api/health` (200 = alles grün, 503 = Problem)
+- Uptime-Kuma → HTTP-Monitor auf `/api/health` (200 = alles grün, 503 = Problem;
+  bezieht sich nur auf Backup-Reports, nicht auf Verify/Watchdog)
+- Verify- und Watchdog-Status je Server auf der Dashboard-Detailseite unter
+  „Zusätzliche Prüfungen" einsehen
 - Quartalsweise Restore-Probe (siehe RESTORE.md) — ungetestete Backups zählen nicht.
+  Der Verify-Agent ist eine Ergänzung, kein Ersatz dafür.
