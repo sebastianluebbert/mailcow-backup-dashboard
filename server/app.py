@@ -11,6 +11,7 @@ Endpoints:
 import os
 import secrets
 import sqlite3
+import subprocess
 import time
 from contextlib import closing
 
@@ -306,6 +307,66 @@ async def agent_script():
         return open(AGENT_SCRIPT).read()
     except OSError:
         raise HTTPException(500, "agent script missing on server")
+
+
+# ── Einstellungen / Updater ─────────────────────────────────────────────────
+REPO_DIR = os.environ.get("REPO_DIR", "/opt/mailcow-backup-dashboard")
+UPDATE_LOG = "/var/log/backupdash-update.log"
+
+
+def _git(*args):
+    try:
+        return subprocess.run(["git", "-C", REPO_DIR, *args],
+                              capture_output=True, text=True, timeout=60).stdout.strip()
+    except Exception:
+        return ""
+
+
+@app.get("/api/settings/version")
+async def version(authorization: str = Header(default="")):
+    if not API_TOKEN or authorization != f"Bearer {API_TOKEN}":
+        raise HTTPException(401, "invalid token")
+    local = _git("log", "-1", "--format=%h|%cd|%s", "--date=format:%d.%m.%Y %H:%M")
+    _git("fetch", "-q", "origin")
+    remote = _git("log", "-1", "--format=%h|%cd|%s", "--date=format:%d.%m.%Y %H:%M", "origin/main")
+    behind = _git("rev-list", "--count", "HEAD..origin/main")
+    parts_l = (local.split("|") + ["", "", ""])[:3]
+    parts_r = (remote.split("|") + ["", "", ""])[:3]
+    return {
+        "repo_dir": REPO_DIR,
+        "installed": {"commit": parts_l[0], "date": parts_l[1], "subject": parts_l[2]},
+        "latest": {"commit": parts_r[0], "date": parts_r[1], "subject": parts_r[2]},
+        "behind": int(behind or 0),
+        "update_available": bool(behind and int(behind) > 0),
+        "stale_hours": STALE_HOURS,
+    }
+
+
+@app.post("/api/settings/update")
+async def run_update(authorization: str = Header(default="")):
+    if not API_TOKEN or authorization != f"Bearer {API_TOKEN}":
+        raise HTTPException(401, "invalid token")
+    script = os.path.join(REPO_DIR, "update.sh")
+    if not os.path.exists(script):
+        raise HTTPException(500, f"update.sh nicht gefunden unter {REPO_DIR}")
+    # Update entkoppelt starten — der Dienst wird dabei neu gestartet,
+    # daher nicht auf das Ergebnis warten (die UI pollt danach /version).
+    subprocess.Popen(["systemd-run", "--unit=backupdash-update",
+                      "--collect", "bash", script],
+                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return {"ok": True, "message": "Update gestartet — Dienst startet gleich neu."}
+
+
+@app.get("/api/settings/update-log")
+async def update_log(authorization: str = Header(default="")):
+    if not API_TOKEN or authorization != f"Bearer {API_TOKEN}":
+        raise HTTPException(401, "invalid token")
+    try:
+        with open(UPDATE_LOG) as f:
+            lines = f.readlines()[-40:]
+        return PlainTextResponse("".join(lines))
+    except OSError:
+        return PlainTextResponse("(noch kein Update-Log vorhanden)")
 
 
 @app.get("/")

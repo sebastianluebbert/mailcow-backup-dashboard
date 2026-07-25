@@ -8,7 +8,7 @@
 ```bash
 export BORG_PASSPHRASE=$(cat /root/.borg-passphrase)
 export BORG_RSH="ssh -p23"
-REPO="u639828@u639828.your-storagebox.de:backups/mailcow-borg"
+REPO="uXXXXXX@uXXXXXX.your-storagebox.de:backups/<server>-borg"
 
 # Verfügbare Stände anzeigen
 borg list "$REPO"

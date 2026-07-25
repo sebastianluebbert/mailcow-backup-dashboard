@@ -64,10 +64,10 @@ Der Installer fragt interaktiv:
 
 | Frage | Beispiel |
 |-------|----------|
-| Borg-Ziel | `u639828@u639828.your-storagebox.de:backups/mailcow-borg` |
+| Borg-Ziel | `uXXXXXX@uXXXXXX.your-storagebox.de:backups/<server>-borg` |
 | SSH-Port | `23` (Hetzner) bzw. `22` |
 | Aufbewahrung | `7` (Tagesstände) |
-| Dashboard-URL | `http://192.168.20.117:8080` |
+| Dashboard-URL | `http://<dashboard-ip>:8080` |
 | Dashboard-Token | Inhalt von `/etc/backupdash.token` auf dem Dashboard-Host |
 | Uhrzeit | `3` (= täglich 3:00) |
 

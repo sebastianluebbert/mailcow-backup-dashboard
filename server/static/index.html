@@ -101,6 +101,7 @@ footer{margin-top:auto;padding:16px 28px;color:var(--mut2);font-size:11px;border
     <a data-view="fleet" class="active">▦&nbsp; Übersicht</a>
     <div class="cap">Verwaltung</div>
     <a data-view="peers" onclick="go('peers')">⊕&nbsp; Peers</a>
+    <a data-view="settings" onclick="go('settings')">⚙&nbsp; Einstellungen</a>
     <div class="cap">Server</div>
     <div id="navServers"></div>
   </nav>
@@ -155,7 +156,59 @@ function render(){
   killCharts();
   if(VIEW==='fleet')renderFleet();
   else if(VIEW==='peers')renderPeers();
+  else if(VIEW==='settings')renderSettings();
   else renderDetail(DATA.find(s=>s.server===VIEW)||DATA[0]);
+}
+
+/* ── Settings view (Version + Updater) ── */
+async function renderSettings(){
+  $('#title').textContent='Einstellungen';$('#crumb').textContent='System & Updates';
+  let v=null,err='';
+  try{v=await api('/api/settings/version')}catch(e){err=e.message}
+  if(err){$('#content').innerHTML=`<div class="panel"><div class="empty">⚠ ${err} — <a class="back" onclick="localStorage.removeItem('dashToken');renderSettings()">Token neu eingeben</a></div></div>`;return}
+  const up=v.update_available;
+  $('#content').innerHTML=`
+  <div class="grid2">
+    <div class="panel"><div class="ph"><h2>Software-Version</h2><span class="sub">${v.repo_dir}</span></div>
+      <div class="pillrow" style="flex-direction:column;align-items:stretch;gap:10px">
+        <div class="pill">Installiert: <b>${v.installed.commit||'?'}</b> <span class="mut">· ${v.installed.date||''}</span><br>
+          <span class="mut" style="font-size:11px">${v.installed.subject||''}</span></div>
+        <div class="pill" style="${up?'border-color:var(--warn)':''}">Neueste (origin/main): <b>${v.latest.commit||'?'}</b> <span class="mut">· ${v.latest.date||''}</span><br>
+          <span class="mut" style="font-size:11px">${v.latest.subject||''}</span></div>
+        <div>${up
+          ?`<span class="badge stale">Update verfügbar — ${v.behind} Commit(s) hinterher</span>`
+          :`<span class="badge ok">Auf dem neuesten Stand</span>`}</div>
+        <div style="display:flex;gap:10px">
+          <button class="btn" style="border-color:var(--acc);color:var(--acc)" ${up?'':'disabled style="opacity:.45"'} onclick="doUpdate()">↻ Update installieren</button>
+          <button class="btn" onclick="renderSettings()">Erneut prüfen</button>
+        </div>
+        <div id="updMsg" class="mut" style="font-size:12px"></div>
+      </div>
+    </div>
+    <div class="panel"><div class="ph"><h2>Update-Log</h2><span class="sub">letzte Zeilen</span></div>
+      <pre id="updLog" style="padding:16px 20px;font-family:var(--mono);font-size:11px;color:var(--mut);white-space:pre-wrap;max-height:320px;overflow:auto">Lade…</pre></div>
+  </div>
+  <div class="panel"><div class="ph"><h2>System-Info</h2></div>
+    <div class="pillrow">
+      <div class="pill">Stale-Schwelle: <b>${v.stale_hours} h</b></div>
+      <div class="pill">Agent-Selbst-Update: <b>über /agent/script</b></div>
+      <div class="pill">Update-Mechanik: <b>git pull → deploy → restart (Rollback bei Fehler)</b></div>
+    </div></div>`;
+  loadUpdLog();
+}
+async function loadUpdLog(){
+  try{const tok=localStorage.dashToken;
+    const r=await fetch('/api/settings/update-log',{headers:{'Authorization':'Bearer '+tok}});
+    $('#updLog').textContent=await r.text();
+  }catch(e){$('#updLog').textContent='(Log nicht lesbar)'}
+}
+async function doUpdate(){
+  if(!confirm('Update jetzt installieren? Das Dashboard startet dabei kurz neu.'))return;
+  try{
+    const r=await api('/api/settings/update',{method:'POST'});
+    $('#updMsg').textContent='⏳ '+r.message+' Seite lädt in 15 s neu…';
+    setTimeout(()=>location.reload(),15000);
+  }catch(e){alert('Fehler: '+e.message)}
 }
 
 /* ── Peers view (NetBird-Style Onboarding) ── */
@@ -183,7 +236,7 @@ async function renderPeers(){
   <div class="grid2">
     <div class="panel"><div class="ph"><h2>Neuen Peer anlegen</h2><span class="sub">erzeugt Enrollment-Befehl</span></div>
       <div style="padding:20px;display:grid;gap:12px">
-        <label class="fld">Name (Hostname)<input id="pName" placeholder="mail2.rexcloud.de"></label>
+        <label class="fld">Name (Hostname)<input id="pName" placeholder="mail2.example.de"></label>
         <label class="fld">Borg-Ziel<input id="pRepo" placeholder="u123456@u123456.your-storagebox.de:backups/mail2-borg"></label>
         <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px">
           <label class="fld">SSH-Port<input id="pPort" value="23" type="number"></label>

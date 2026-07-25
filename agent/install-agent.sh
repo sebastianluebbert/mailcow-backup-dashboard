@@ -14,7 +14,7 @@ echo "── Mailcow Backup Agent — Installation ─────────�
 read -rp "Storage-Box/Borg-Ziel (z.B. u123456@u123456.your-storagebox.de:backups/mailcow-borg): " BORG_REPO
 read -rp "SSH-Port des Ziels [23]: " BORG_SSH_PORT; BORG_SSH_PORT=${BORG_SSH_PORT:-23}
 read -rp "Aufbewahrung in Tagen [7]: " KEEP_DAILY; KEEP_DAILY=${KEEP_DAILY:-7}
-read -rp "Dashboard-URL (leer = kein Reporting, z.B. http://192.168.20.117:8080): " DASH_URL
+read -rp "Dashboard-URL (leer = kein Reporting, z.B. http://<dashboard-ip>:8080): " DASH_URL
 DASH_TOKEN=""
 [ -n "$DASH_URL" ] && read -rp "Dashboard-Token: " DASH_TOKEN
 read -rp "Backup-Uhrzeit (Stunde 0-23) [3]: " HOUR; HOUR=${HOUR:-3}
