@@ -1,3 +1,4 @@
+import atexit
 import os
 import subprocess
 import sys
@@ -9,6 +10,7 @@ from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
 TEST_STATE = tempfile.TemporaryDirectory(prefix="backupdash-tests-")
+atexit.register(TEST_STATE.cleanup)
 DB_PATH = Path(TEST_STATE.name) / "backups.db"
 
 os.environ["DASH_DB"] = str(DB_PATH)
