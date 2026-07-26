@@ -17,7 +17,7 @@ apt-get update -qq && apt-get install -y -qq python3-venv curl git >/dev/null
 
 echo "→ Dateien nach $APP…"
 mkdir -p "$APP/data" "$APP/agent"
-cp "$SCRIPT_DIR/app.py" "$APP/"
+cp "$SCRIPT_DIR/app.py" "$SCRIPT_DIR/db.py" "$SCRIPT_DIR/auth.py" "$APP/"
 install -m 644 "$SCRIPT_DIR/requirements.txt" "$APP/requirements.txt"
 mkdir -p "$APP/static"
 install -m 644 "$SCRIPT_DIR/static/index.html" "$APP/static/index.html"
@@ -46,13 +46,20 @@ else
   chmod 600 /etc/backupdash.token
 fi
 
-if [ -f /etc/backupdash.admin.token ]; then
-  ADMIN_TOKEN=$(cat /etc/backupdash.admin.token)
-  echo "→ Bestehender Admin-Token wird weiterverwendet."
+# Menschliche Logins laufen über echte Benutzerkonten (Passwort + optional
+# TOTP/Passkey), nicht mehr über einen geteilten Admin-Token. Ein Bootstrap-
+# Konto wird beim ersten Start angelegt, sofern noch keine Benutzer existieren
+# — danach ist die Variable wirkungslos und kann gefahrlos gesetzt bleiben.
+echo "→ Administrator-Konto…"
+read -rp "Admin-Benutzername [admin]: " BOOTSTRAP_USER
+BOOTSTRAP_USER=${BOOTSTRAP_USER:-admin}
+if [ -f /etc/backupdash.bootstrap.password ]; then
+  BOOTSTRAP_PASSWORD=$(cat /etc/backupdash.bootstrap.password)
+  echo "→ Bestehendes Bootstrap-Passwort wird weiterverwendet."
 else
-  ADMIN_TOKEN=$(openssl rand -hex 24)
-  echo "$ADMIN_TOKEN" > /etc/backupdash.admin.token
-  chmod 600 /etc/backupdash.admin.token
+  BOOTSTRAP_PASSWORD=$(openssl rand -base64 18)
+  echo "$BOOTSTRAP_PASSWORD" > /etc/backupdash.bootstrap.password
+  chmod 600 /etc/backupdash.bootstrap.password
 fi
 
 echo "→ systemd-Service…"
@@ -63,7 +70,8 @@ After=network.target
 
 [Service]
 Environment="DASH_TOKEN=$TOKEN"
-Environment="DASH_ADMIN_TOKEN=$ADMIN_TOKEN"
+Environment="DASH_BOOTSTRAP_USER=$BOOTSTRAP_USER"
+Environment="DASH_BOOTSTRAP_PASSWORD=$BOOTSTRAP_PASSWORD"
 Environment="REPO_DIR=$REPO_DIR"
 WorkingDirectory=$APP
 ExecStart=$APP/venv/bin/uvicorn app:app --host 0.0.0.0 --port $PORT
@@ -80,9 +88,11 @@ sleep 2
 if curl -sf "http://127.0.0.1:$PORT/api/health" >/dev/null 2>&1 || [ "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:$PORT/)" = 200 ]; then
   echo ""
   echo "✔ Dashboard läuft: http://$(hostname -I | awk '{print $1}'):$PORT"
-  echo "  Agent-Token: $TOKEN"
-  echo "  Admin-Token (für die UI): $ADMIN_TOKEN"
-  echo "  Token-Dateien: /etc/backupdash.token und /etc/backupdash.admin.token"
+  echo "  Agent-Token (für Server-Enrollment): $TOKEN"
+  echo "  Erster Login: Benutzername '$BOOTSTRAP_USER', Passwort siehe /etc/backupdash.bootstrap.password"
+  echo "  ⚠ Bitte nach dem ersten Login das Passwort ändern und Zwei-Faktor-Authentifizierung"
+  echo "    unter Konto einrichten. Fehlt eine Bootstrap-Konfiguration, richtet die"
+  echo "    Weboberfläche das erste Konto beim ersten Aufruf selbst ein."
 else
   echo "⚠ Dienst prüfen: systemctl status backupdash"
 fi
