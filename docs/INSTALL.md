@@ -19,16 +19,19 @@ bash install-server.sh
 Der Installer:
 1. installiert Python-venv + FastAPI/uvicorn
 2. erzeugt einen **Agent-Token** (`/etc/backupdash.token`) für Backup-Reports
-3. erzeugt einen getrennten **Admin-Token** (`/etc/backupdash.admin.token`) für
-   Peer-Verwaltung und Systemupdates
+3. fragt einen **Administrator-Benutzernamen** ab und erzeugt ein zufälliges
+   Bootstrap-Passwort (`/etc/backupdash.bootstrap.password`) für den ersten Login
 4. richtet den systemd-Dienst `backupdash` ein (Port frei wählbar, Standard 8080)
 
 Danach erreichbar unter `http://<host>:8080`.
 
-Beim ersten Öffnen von **Peers** oder **Einstellungen** fragt die UI nach dem
-Admin-Token. Standardmäßig bleibt er nur für die aktuelle Browser-Sitzung
-gespeichert. Für produktiven Betrieb sollte vor dem Dashboard ein
-TLS-terminierender Reverse-Proxy stehen.
+Beim ersten Aufruf zeigt die Oberfläche — falls kein Bootstrap-Konto per
+Umgebungsvariable gesetzt wurde — eine Einrichtungsseite für das erste
+Administrator-Konto. Login erfolgt über eine serverseitige Sitzung
+(Cookie), optional zusätzlich abgesichert mit TOTP oder einem Passkey.
+Details: [docs/AUTH.md](AUTH.md). Für produktiven Betrieb sollte vor dem
+Dashboard ein TLS-terminierender Reverse-Proxy stehen — das ist zudem
+Voraussetzung, um Passkeys nutzen zu können.
 
 ### Uptime-Kuma-Anbindung (optional)
 
@@ -55,9 +58,8 @@ Watchdog-Agent samt gemeinsamer Bibliothek. Details zu den einzelnen Agents:
 
 ### Weg A: Peer-Onboarding über das Dashboard (empfohlen, NetBird-Style)
 
-1. Im Dashboard → **Peers** → „Neuen Peer anlegen" (Name, Borg-Ziel, Aufbewahrung,
-   Uhrzeit, Backup-Komponenten) — beim ersten Aufruf wird der Admin-Token
-   abgefragt (`/etc/backupdash.admin.token`)
+1. Im Dashboard anmelden und → **Peers** → „Neuen Peer anlegen" (Name, Borg-Ziel,
+   Aufbewahrung, Uhrzeit, Backup-Komponenten)
 2. Den erzeugten **Enrollment-Befehl** kopieren und auf dem Mailcow-Server als root ausführen:
    ```bash
    curl -fsSL http://<dashboard>:8080/enroll/<key> | bash
@@ -129,7 +131,7 @@ cd /opt/mailcow-backup-dashboard
 bash update.sh
 ```
 
-Bei älteren Installationen ohne `DASH_ADMIN_TOKEN` bleibt aus
-Kompatibilitätsgründen der bisherige Agent-Token auch Admin-Token. Für eine
-saubere Token-Trennung den aktuellen `server/install-server.sh` erneut ausführen;
-vorhandene Tokens und Daten werden dabei beibehalten.
+Bestehende Installationen, die noch den alten geteilten Admin-Token kannten,
+erhalten nach dem Update automatisch die neue Einrichtungsseite für das erste
+Benutzerkonto — die Datenbank für Benutzerkonten ist zunächst leer und wird
+beim ersten Aufruf befüllt. Details: [docs/AUTH.md](AUTH.md).

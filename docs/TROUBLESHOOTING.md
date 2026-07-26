@@ -43,6 +43,17 @@
 | Dashboard nicht erreichbar | `systemctl status backupdash`, Port belegt?, Firewall am Dashboard-Host |
 | Charts leer | Erst nach 2+ Läufen sinnvoll; Browser-Konsole auf CDN-Blockade (Chart.js) prüfen |
 
+## Login, 2FA und Passkeys
+
+| Symptom | Ursache / Lösung |
+|---------|------------------|
+| Einrichtungsseite erscheint erneut nach Update | Normal — die Benutzertabelle war nach dem Update leer. Erstes Konto anlegen oder `DASH_BOOTSTRAP_USER`/`DASH_BOOTSTRAP_PASSWORD` setzen (siehe AUTH.md) |
+| „Konto vorübergehend gesperrt" | 5 Fehlversuche (Passwort oder TOTP) sperren ein Konto 15 Minuten; danach automatisch wieder frei |
+| Admin-Passwort vergessen | Ein anderer Administrator setzt über **Benutzer** ein neues Konto an, oder direkt in der SQLite-DB (`/opt/backupdash/data/backups.db`, Tabelle `users`) den Datensatz löschen — Vorsicht, danach ist eine Neueinrichtung nötig |
+| „Passkeys sind auf diesem Host nicht verfügbar" | WebAuthn benötigt HTTPS oder den Hostnamen `localhost` — reine IP-Adressen funktionieren laut Spezifikation nicht (siehe AUTH.md) |
+| TOTP-Code wird abgelehnt | Uhrzeit des Mailcow-/Client-Geräts prüfen — TOTP toleriert nur ±1 Zeitfenster (±30s) |
+| Nach Passwortänderung überall abgemeldet | Erwartetes Verhalten — alle Sitzungen werden beim Passwortwechsel invalidiert |
+
 ## Nützliche Kommandos
 
 ```bash

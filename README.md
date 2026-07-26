@@ -16,6 +16,8 @@ mit einer spezialisierten **Agent-Suite** statt eines einzelnen Backup-Skripts.
 - 🚨 Stale-Erkennung (>26 h kein Backup → Warnung) + `/api/health` für Uptime-Kuma
 - 🛰 Jeder Agent meldet seine Läufe (ok/Fehler, Dauer, Details) per REST an den Collector
 - ⚙️ Geschützte Systemseite mit Versionsprüfung, Update-Workflow und Loganzeige
+- 🔑 **Echte Benutzerkonten** mit Login, TOTP-Zwei-Faktor-Authentifizierung und
+  Passkeys (WebAuthn) statt eines geteilten Admin-Tokens
 
 ## Die Agent-Suite
 
@@ -60,6 +62,7 @@ Details zu jedem Agent: [docs/AGENTS.md](docs/AGENTS.md)
 | `agent/mailcow-watchdog.sh` | Watchdog-Agent (Health-Check, läuft stündlich) |
 | `agent/install-agent.sh` | Interaktiver Installer für neue mailcow-Server |
 | `docs/AGENTS.md` | Architektur und Konfiguration der Agent-Suite |
+| `docs/AUTH.md` | Benutzerverwaltung, Login, TOTP und Passkeys |
 | `docs/INSTALL.md` | Schritt-für-Schritt-Anleitung |
 | `docs/RESTORE.md` | **Wiederherstellung** (komplett & einzelne Mailboxen) |
 | `docs/TROUBLESHOOTING.md` | Häufige Fehler & Lösungen |
@@ -71,7 +74,7 @@ Details zu jedem Agent: [docs/AGENTS.md](docs/AGENTS.md)
 ```bash
 git clone https://github.com/sebastianluebbert/mailcow-backup-dashboard.git
 cd mailcow-backup-dashboard/server
-bash install-server.sh          # fragt Port & erzeugt Agent-/Admin-Token
+bash install-server.sh          # fragt Port, Agent-Token und Admin-Bootstrap-Konto
 ```
 
 **2. Agent-Suite auf jedem mailcow-Server:**
@@ -109,19 +112,28 @@ folgt die Flotte automatisch beim nächsten Lauf.
 > Suite. Bitte den Enrollment-Befehl erneut ausführen oder `install-agent.sh`
 > erneut laufen lassen, um Verify- und Watchdog-Agent zu ergänzen.
 
+> **Migration vom Admin-Token:** Ältere Installationen kannten nur einen
+> geteilten Admin-Token. Nach dem Update auf die Benutzerverwaltung ist die
+> Konten-Tabelle zunächst leer — beim ersten Aufruf des Dashboards erscheint
+> automatisch die Einrichtungsseite für das erste Administrator-Konto. Details
+> und optionale nicht-interaktive Einrichtung: [docs/AUTH.md](docs/AUTH.md).
+
 ## Sicherheit
 
 - Backups sind **client-seitig verschlüsselt** (Borg repokey-blake2) — das Ziel sieht nur Chiffrat.
 - **Passphrase** (`/root/.borg-passphrase`) und **Key-Export** (`/root/borg-key-backup.txt`)
   unbedingt extern sichern — ohne sie ist kein Restore möglich.
-- Neue Installationen verwenden getrennte **Agent- und Admin-Tokens**. Der
-  Admin-Token liegt unter `/etc/backupdash.admin.token`.
-- Agent-Self-Updates und schreibende APIs benötigen einen Bearer-Token;
-  Enrollment-Keys sind nur einmal verwendbar.
+- **Menschlicher Login** läuft über echte Benutzerkonten (Passwort + optional
+  TOTP oder Passkey), nicht mehr über einen geteilten Admin-Token — siehe
+  [docs/AUTH.md](docs/AUTH.md). Agents authentifizieren sich weiterhin separat
+  über einen eigenen Bearer-Token (`DASH_TOKEN`).
+- Enrollment-Keys sind nur einmal verwendbar; wiederholte fehlgeschlagene
+  Logins sperren ein Konto vorübergehend.
 - Der **Verify-Agent** greift ausschließlich lesend auf das Borg-Repository zu
   und rührt den laufenden Mailcow-Stack nie an (kein `docker stop`/`start`).
 - Sicherheitsheader und kontextgerechtes HTML-Escaping härten die Oberfläche.
-  Der Betrieb hinter HTTPS in einem LAN/VPN bleibt empfohlen.
+  Der Betrieb hinter HTTPS in einem LAN/VPN bleibt empfohlen — Passkeys
+  benötigen ohnehin HTTPS oder den Hostnamen `localhost`.
 
 ## Lizenz
 
