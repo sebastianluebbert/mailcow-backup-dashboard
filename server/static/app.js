@@ -3,8 +3,6 @@
 
   const REFRESH_INTERVAL_MS = 60_000;
   const REQUEST_TIMEOUT_MS = 15_000;
-  const TOKEN_KEY = "backupdash.adminToken";
-  const LEGACY_TOKEN_KEY = "dashToken";
   const THEME_KEY = "backupdash.theme";
 
   const STATUS = {
@@ -36,24 +34,24 @@
     charts: [],
     viewNonce: 0,
     updatePolling: false,
+    currentUser: null,
+    webauthn: { secure_context: false, available: false },
+    authView: { kind: "login" },
   };
 
   const dom = {
+    authScreen: document.querySelector("#auth-screen"),
+    authContent: document.querySelector("#auth-content"),
+    appShell: document.querySelector("#app-shell"),
     main: document.querySelector("#main-content"),
     breadcrumb: document.querySelector("#breadcrumb"),
     serverNav: document.querySelector("#server-nav"),
     serverCount: document.querySelector("#server-count"),
     syncLabel: document.querySelector("#sync-label"),
     footerSummary: document.querySelector("#footer-summary"),
-    sidebarStatus: document.querySelector("#sidebar-status"),
-    sidebarStatusDetail: document.querySelector("#sidebar-status-detail"),
-    sidebarStatusDot: document.querySelector("#sidebar-status-dot"),
-    lockButton: document.querySelector("#lock-button"),
-    authDialog: document.querySelector("#auth-dialog"),
-    authForm: document.querySelector("#auth-form"),
-    authToken: document.querySelector("#auth-token"),
-    authRemember: document.querySelector("#auth-remember"),
-    authError: document.querySelector("#auth-error"),
+    navUsers: document.querySelector("#nav-users"),
+    accountUsername: document.querySelector("#account-username"),
+    accountAvatar: document.querySelector("#account-avatar"),
     confirmDialog: document.querySelector("#confirm-dialog"),
     confirmEyebrow: document.querySelector("#confirm-eyebrow"),
     confirmTitle: document.querySelector("#confirm-title"),
@@ -82,6 +80,11 @@
     box: '<path d="M21 8.5v7L12 20 3 15.5v-7L12 4z"></path><path d="M3 8.5 12 13l9-4.5"></path><line x1="12" y1="13" x2="12" y2="20"></line>',
     copy: '<rect x="9" y="9" width="12.5" height="12.5" rx="2"></rect><path d="M5 15H4.5a2 2 0 0 1-2-2V4.5a2 2 0 0 1 2-2H13a2 2 0 0 1 2 2V5"></path>',
     lock: '<rect x="3" y="11" width="18" height="10" rx="2"></rect><path d="M7 11V7a5 5 0 0 1 10 0v4"></path>',
+    logOut: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"></path><polyline points="16 17 21 12 16 7"></polyline><line x1="21" y1="12" x2="9" y2="12"></line>',
+    user: '<path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"></path><circle cx="12" cy="7" r="4"></circle>',
+    users: '<path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path>',
+    smartphone: '<rect x="5" y="2" width="14" height="20" rx="2" ry="2"></rect><line x1="12" y1="18" x2="12.01" y2="18"></line>',
+    key: '<path d="M21 2 19 4m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0 3 3L22 7l-3-3m-3.5 3.5L19 4"></path>',
   };
 
   const icon = (name, extraClass = "") => {
@@ -169,6 +172,7 @@
   const statusInfo = (value) => STATUS[value] || STATUS.error;
   const shortHost = (hostname) => String(hostname || "Unbekannt").split(".")[0];
   const initials = (hostname) => shortHost(hostname).slice(0, 2);
+  const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
   function renderCheckCard(title, check) {
     if (!check) {
@@ -195,7 +199,6 @@
       return `<span class="meta-pill">${escapeHtml(name)}: <strong>${escapeHtml(value)}</strong></span>`;
     }).join("");
   }
-  const sleep = (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds));
 
   function setPageMeta(title, eyebrow) {
     document.title = `${title} · Backup Control`;
@@ -225,80 +228,6 @@
     if (state.route.name === "overview" || state.route.name === "server") renderCurrentView();
   }
 
-  function getToken() {
-    const sessionToken = sessionStorage.getItem(TOKEN_KEY);
-    if (sessionToken) return sessionToken;
-
-    const storedToken = localStorage.getItem(TOKEN_KEY);
-    if (storedToken) return storedToken;
-
-    const legacyToken = localStorage.getItem(LEGACY_TOKEN_KEY);
-    if (legacyToken) {
-      localStorage.setItem(TOKEN_KEY, legacyToken);
-      localStorage.removeItem(LEGACY_TOKEN_KEY);
-      return legacyToken;
-    }
-    return "";
-  }
-
-  function tokenStorageMode() {
-    if (sessionStorage.getItem(TOKEN_KEY)) return "Nur diese Browser-Sitzung";
-    if (localStorage.getItem(TOKEN_KEY)) return "Dauerhaft auf diesem Gerät";
-    return "Nicht entsperrt";
-  }
-
-  function storeToken(token, remember) {
-    clearToken();
-    const storage = remember ? localStorage : sessionStorage;
-    storage.setItem(TOKEN_KEY, token);
-    updateSessionControls();
-  }
-
-  function clearToken() {
-    sessionStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(TOKEN_KEY);
-    localStorage.removeItem(LEGACY_TOKEN_KEY);
-    updateSessionControls();
-  }
-
-  function updateSessionControls() {
-    dom.lockButton.classList.toggle("is-hidden", !getToken());
-  }
-
-  let authRequest = null;
-
-  function requestToken(message = "") {
-    const existing = getToken();
-    if (existing) return Promise.resolve(existing);
-
-    if (authRequest) {
-      if (message) dom.authError.textContent = message;
-      return authRequest.promise;
-    }
-
-    dom.authForm.reset();
-    dom.authError.textContent = message;
-    dom.authDialog.showModal();
-    window.setTimeout(() => dom.authToken.focus(), 0);
-
-    let resolveRequest;
-    let rejectRequest;
-    const promise = new Promise((resolve, reject) => {
-      resolveRequest = resolve;
-      rejectRequest = reject;
-    });
-    authRequest = { promise, resolve: resolveRequest, reject: rejectRequest };
-    return promise;
-  }
-
-  function cancelTokenRequest() {
-    if (!authRequest) return;
-    const request = authRequest;
-    authRequest = null;
-    dom.authDialog.close();
-    request.reject(new ApiError("Admin-Bereich wurde nicht entsperrt.", 401));
-  }
-
   async function parseErrorResponse(response) {
     try {
       const contentType = response.headers.get("content-type") || "";
@@ -312,9 +241,21 @@
     }
   }
 
-  async function api(path, options = {}, retryOnUnauthorized = true) {
+  let sessionExpiryHandled = false;
+
+  function handleSessionExpired() {
+    if (sessionExpiryHandled) return;
+    sessionExpiryHandled = true;
+    state.currentUser = null;
+    state.updatePolling = false;
+    state.authView = { kind: "login", error: "Sitzung abgelaufen — bitte erneut anmelden." };
+    showAuthScreen();
+    renderAuthView();
+    window.setTimeout(() => { sessionExpiryHandled = false; }, 2000);
+  }
+
+  async function api(path, options = {}) {
     const {
-      auth = false,
       responseType = "json",
       timeout = REQUEST_TIMEOUT_MS,
       headers: suppliedHeaders = {},
@@ -323,7 +264,6 @@
 
     const headers = new Headers(suppliedHeaders);
     if (fetchOptions.body && !headers.has("Content-Type")) headers.set("Content-Type", "application/json");
-    if (auth) headers.set("Authorization", `Bearer ${await requestToken()}`);
 
     const controller = new AbortController();
     const timer = window.setTimeout(() => controller.abort(), timeout);
@@ -333,6 +273,7 @@
       response = await fetch(path, {
         ...fetchOptions,
         headers,
+        credentials: "same-origin",
         signal: controller.signal,
       });
     } catch (error) {
@@ -342,10 +283,8 @@
       window.clearTimeout(timer);
     }
 
-    if (response.status === 401 && auth && retryOnUnauthorized) {
-      clearToken();
-      await requestToken("Der Token ist ungültig oder wurde geändert.");
-      return api(path, options, false);
+    if (response.status === 401 && !path.startsWith("/api/auth/")) {
+      handleSessionExpired();
     }
 
     if (!response.ok) throw new ApiError(await parseErrorResponse(response), response.status);
@@ -362,7 +301,7 @@
         <strong>${escapeHtml(title)}</strong>
         ${message ? `<p>${escapeHtml(message)}</p>` : ""}
       </div>
-      <button type="button" data-action="dismiss-toast" aria-label="Hinweis schließen">×</button>`;
+      <button type="button" data-action="dismiss-toast" aria-label="Hinweis schließen">${icon("x")}</button>`;
     dom.toastRegion.append(toast);
 
     if (duration > 0) {
@@ -391,13 +330,340 @@
     });
   }
 
+  // ── WebAuthn (passkey) browser helpers ──────────────────────────────────
+  const webauthnSupported = () => typeof window.PublicKeyCredential !== "undefined";
+
+  function bufferToBase64url(buffer) {
+    const bytes = new Uint8Array(buffer);
+    let binary = "";
+    for (const byte of bytes) binary += String.fromCharCode(byte);
+    return btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+  }
+
+  function base64urlToBuffer(base64url) {
+    const padding = "=".repeat((4 - (base64url.length % 4)) % 4);
+    const base64 = (base64url + padding).replace(/-/g, "+").replace(/_/g, "/");
+    const raw = atob(base64);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i += 1) bytes[i] = raw.charCodeAt(i);
+    return bytes.buffer;
+  }
+
+  function creationOptionsFromServer(options) {
+    return {
+      ...options,
+      challenge: base64urlToBuffer(options.challenge),
+      user: { ...options.user, id: base64urlToBuffer(options.user.id) },
+      excludeCredentials: (options.excludeCredentials || []).map((c) => ({ ...c, id: base64urlToBuffer(c.id) })),
+    };
+  }
+
+  function requestOptionsFromServer(options) {
+    return {
+      ...options,
+      challenge: base64urlToBuffer(options.challenge),
+      allowCredentials: (options.allowCredentials || []).map((c) => ({ ...c, id: base64urlToBuffer(c.id) })),
+    };
+  }
+
+  function registrationCredentialToJSON(credential) {
+    return {
+      id: credential.id,
+      rawId: bufferToBase64url(credential.rawId),
+      type: credential.type,
+      response: {
+        clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+        attestationObject: bufferToBase64url(credential.response.attestationObject),
+        transports: credential.response.getTransports ? credential.response.getTransports() : [],
+      },
+    };
+  }
+
+  function authenticationCredentialToJSON(credential) {
+    return {
+      id: credential.id,
+      rawId: bufferToBase64url(credential.rawId),
+      type: credential.type,
+      response: {
+        clientDataJSON: bufferToBase64url(credential.response.clientDataJSON),
+        authenticatorData: bufferToBase64url(credential.response.authenticatorData),
+        signature: bufferToBase64url(credential.response.signature),
+        userHandle: credential.response.userHandle ? bufferToBase64url(credential.response.userHandle) : undefined,
+      },
+    };
+  }
+
+  function describeWebauthnError(error) {
+    if (error && error.name === "NotAllowedError") {
+      return "Vorgang abgebrochen oder Zeit abgelaufen.";
+    }
+    return error?.message || "Passkey-Vorgang fehlgeschlagen.";
+  }
+
+  // ── Auth screen: setup / login / MFA ────────────────────────────────────
+  function showAuthScreen() {
+    dom.appShell.hidden = true;
+    dom.authScreen.hidden = false;
+  }
+
+  function showAppShell() {
+    dom.authScreen.hidden = true;
+    dom.appShell.hidden = false;
+  }
+
+  async function checkAuthStatus() {
+    try {
+      const status = await api("/api/auth/status");
+      state.webauthn = status.webauthn || { secure_context: false, available: false };
+      if (status.needs_setup) {
+        state.currentUser = null;
+        state.authView = { kind: "setup" };
+      } else if (!status.authenticated) {
+        state.currentUser = null;
+        state.authView = { kind: "login" };
+      } else {
+        state.currentUser = status.user;
+        state.authView = null;
+      }
+    } catch {
+      state.currentUser = null;
+      state.authView = { kind: "login", error: "Collector nicht erreichbar." };
+    }
+  }
+
+  async function completeLogin(user) {
+    state.currentUser = user;
+    state.authView = null;
+    showAppShell();
+    renderNavigation();
+    updateConnectionState();
+    await refreshData({ render: true });
+    renderCurrentView();
+    showToast("Angemeldet", `Willkommen, ${user.username}.`, "success");
+  }
+
+  function renderAuthView() {
+    const view = state.authView || { kind: "login" };
+    document.title = "Anmelden · Backup Control";
+    if (view.kind === "setup") return renderSetupScreen();
+    if (view.kind === "mfa") return renderMfaScreen(view);
+    return renderLoginScreen(view);
+  }
+
+  function renderSetupScreen() {
+    dom.authContent.innerHTML = `
+      <p class="eyebrow">Erstinstallation</p>
+      <h1>Administrator-Konto anlegen</h1>
+      <p class="auth-lead">Richten Sie das erste Konto ein, um Backup Control zu verwenden.</p>
+      <form id="setup-form" class="auth-form" novalidate>
+        <label class="field">
+          <span>Benutzername</span>
+          <input name="username" required minlength="3" maxlength="64" pattern="[A-Za-z0-9._-]{3,64}" autocomplete="username" autofocus>
+        </label>
+        <label class="field">
+          <span>Passwort</span>
+          <input name="password" type="password" required minlength="10" autocomplete="new-password">
+          <small class="field-hint">Mindestens 10 Zeichen.</small>
+        </label>
+        <label class="field">
+          <span>Passwort bestätigen</span>
+          <input name="password_confirm" type="password" required minlength="10" autocomplete="new-password">
+        </label>
+        <p class="form-error" id="auth-form-error" role="alert"></p>
+        <button class="button button-primary auth-submit" type="submit">Administrator anlegen</button>
+      </form>`;
+  }
+
+  function renderLoginScreen(view) {
+    const showPasskey = state.webauthn.available && webauthnSupported();
+    dom.authContent.innerHTML = `
+      <p class="eyebrow">Anmeldung</p>
+      <h1>Willkommen zurück</h1>
+      ${view.error ? `<div class="banner is-warning" role="alert"><span class="banner-icon" aria-hidden="true">${icon("alertTriangle")}</span><span>${escapeHtml(view.error)}</span></div>` : ""}
+      <form id="login-form" class="auth-form" novalidate>
+        <label class="field">
+          <span>Benutzername</span>
+          <input name="username" required autocomplete="username" autofocus>
+        </label>
+        <label class="field">
+          <span>Passwort</span>
+          <input name="password" type="password" required autocomplete="current-password">
+        </label>
+        <p class="form-error" id="auth-form-error" role="alert"></p>
+        <button class="button button-primary auth-submit" type="submit">Anmelden</button>
+      </form>
+      ${showPasskey ? `
+        <div class="auth-divider"><span>oder</span></div>
+        <button class="button button-secondary auth-submit" type="button" data-action="login-with-passkey">
+          ${icon("key")}<span>Mit Passkey anmelden</span>
+        </button>` : ""}`;
+  }
+
+  function renderMfaScreen(view) {
+    const showTotp = view.methods.includes("totp");
+    const showPasskey = view.methods.includes("webauthn") && state.webauthn.available && webauthnSupported();
+    dom.authContent.innerHTML = `
+      <p class="eyebrow">Zwei-Faktor-Bestätigung</p>
+      <h1>Fast geschafft</h1>
+      <p class="auth-lead">Angemeldet als <strong>${escapeHtml(view.username || "")}</strong></p>
+      ${view.error ? `<div class="banner is-warning" role="alert"><span class="banner-icon" aria-hidden="true">${icon("alertTriangle")}</span><span>${escapeHtml(view.error)}</span></div>` : ""}
+      ${showTotp ? `
+        <form id="totp-login-form" class="auth-form" novalidate>
+          <label class="field">
+            <span>Code aus der Authenticator-App</span>
+            <input name="code" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{6,10}" maxlength="10" required autofocus>
+          </label>
+          <p class="form-error" id="auth-form-error" role="alert"></p>
+          <button class="button button-primary auth-submit" type="submit">Bestätigen</button>
+        </form>` : ""}
+      ${showPasskey ? `
+        ${showTotp ? '<div class="auth-divider"><span>oder</span></div>' : ""}
+        <button class="button button-secondary auth-submit" type="button" data-action="login-with-passkey-mfa">
+          ${icon("key")}<span>Mit Passkey bestätigen</span>
+        </button>` : ""}
+      <button class="button button-secondary auth-submit" type="button" data-action="back-to-login">
+        ${icon("chevronLeft")}<span>Zurück zur Anmeldung</span>
+      </button>`;
+  }
+
+  async function submitSetupForm(form) {
+    const errorElement = document.querySelector("#auth-form-error");
+    const submit = form.querySelector(".auth-submit");
+    const data = new FormData(form);
+    const username = String(data.get("username") || "").trim();
+    const password = String(data.get("password") || "");
+    const confirmPassword = String(data.get("password_confirm") || "");
+    errorElement.textContent = "";
+    if (password !== confirmPassword) {
+      errorElement.textContent = "Die Passwörter stimmen nicht überein.";
+      return;
+    }
+    submit.disabled = true;
+    try {
+      const result = await api("/api/auth/setup", { method: "POST", body: JSON.stringify({ username, password }) });
+      await completeLogin(result.user);
+    } catch (error) {
+      errorElement.textContent = error.message;
+    } finally {
+      submit.disabled = false;
+    }
+  }
+
+  async function submitLoginForm(form) {
+    const errorElement = document.querySelector("#auth-form-error");
+    const submit = form.querySelector(".auth-submit");
+    const data = new FormData(form);
+    const username = String(data.get("username") || "").trim();
+    const password = String(data.get("password") || "");
+    errorElement.textContent = "";
+    submit.disabled = true;
+    try {
+      const result = await api("/api/auth/login", { method: "POST", body: JSON.stringify({ username, password }) });
+      if (result.mfa_required) {
+        state.authView = { kind: "mfa", loginToken: result.login_token, methods: result.methods, username };
+        renderAuthView();
+        return;
+      }
+      await completeLogin(result.user);
+    } catch (error) {
+      errorElement.textContent = error.message;
+    } finally {
+      submit.disabled = false;
+    }
+  }
+
+  async function submitTotpLoginForm(form) {
+    const view = state.authView;
+    const errorElement = document.querySelector("#auth-form-error");
+    const submit = form.querySelector(".auth-submit");
+    const data = new FormData(form);
+    const code = String(data.get("code") || "").trim();
+    errorElement.textContent = "";
+    submit.disabled = true;
+    try {
+      const result = await api("/api/auth/login/totp", {
+        method: "POST",
+        body: JSON.stringify({ login_token: view.loginToken, code }),
+      });
+      await completeLogin(result.user);
+    } catch (error) {
+      errorElement.textContent = error.message;
+      submit.disabled = false;
+    }
+  }
+
+  async function loginWithPasskeyDirect() {
+    const usernameField = document.querySelector('#login-form input[name="username"]');
+    const username = usernameField ? usernameField.value.trim() : "";
+    const errorElement = document.querySelector("#auth-form-error");
+    try {
+      const optionsResponse = await api("/api/auth/login/webauthn/options", {
+        method: "POST",
+        body: JSON.stringify({ username: username || undefined }),
+      });
+      const credential = await navigator.credentials.get({
+        publicKey: requestOptionsFromServer(optionsResponse.options),
+      });
+      const result = await api("/api/auth/login/webauthn/verify", {
+        method: "POST",
+        body: JSON.stringify({
+          state_token: optionsResponse.state_token,
+          credential: authenticationCredentialToJSON(credential),
+        }),
+      });
+      await completeLogin(result.user);
+    } catch (error) {
+      if (errorElement) errorElement.textContent = describeWebauthnError(error);
+    }
+  }
+
+  async function loginWithPasskeyStepUp() {
+    const view = state.authView;
+    const errorElement = document.querySelector("#auth-form-error");
+    try {
+      const optionsResponse = await api("/api/auth/login/webauthn/options", {
+        method: "POST",
+        body: JSON.stringify({ login_token: view.loginToken }),
+      });
+      const credential = await navigator.credentials.get({
+        publicKey: requestOptionsFromServer(optionsResponse.options),
+      });
+      const result = await api("/api/auth/login/webauthn/verify", {
+        method: "POST",
+        body: JSON.stringify({
+          state_token: optionsResponse.state_token,
+          login_token: view.loginToken,
+          credential: authenticationCredentialToJSON(credential),
+        }),
+      });
+      await completeLogin(result.user);
+    } catch (error) {
+      view.error = describeWebauthnError(error);
+      renderAuthView();
+    }
+  }
+
+  async function logout() {
+    try {
+      await api("/api/auth/logout", { method: "POST" });
+    } catch {
+      // Ignore network errors here — we clear local state regardless.
+    }
+    state.currentUser = null;
+    state.updatePolling = false;
+    state.authView = { kind: "login" };
+    showAuthScreen();
+    renderAuthView();
+    showToast("Abgemeldet", "Sie wurden erfolgreich abgemeldet.", "success");
+  }
+
   function parseRoute() {
     const raw = (window.location.hash || "#/overview").replace(/^#\//, "");
     const [name, ...parts] = raw.split("/");
     if (name === "server" && parts.length) {
       return { name: "server", server: decodeData(parts.join("/")) };
     }
-    if (["overview", "peers", "settings"].includes(name)) return { name };
+    if (["overview", "peers", "settings", "account", "users"].includes(name)) return { name };
     return { name: "overview" };
   }
 
@@ -413,6 +679,13 @@
       else link.removeAttribute("aria-current");
     });
 
+    dom.navUsers.classList.toggle("is-hidden", !state.currentUser?.is_admin);
+
+    if (state.currentUser) {
+      dom.accountUsername.textContent = state.currentUser.username;
+      dom.accountAvatar.textContent = initials(state.currentUser.username).toUpperCase();
+    }
+
     dom.serverCount.textContent = String(state.servers.length);
     dom.serverNav.innerHTML = state.servers.map((server) => {
       const info = statusInfo(server.state);
@@ -427,14 +700,6 @@
   }
 
   function updateConnectionState() {
-    const hasProblems = asNumber(state.summary.error) > 0 || asNumber(state.summary.stale) > 0;
-    dom.sidebarStatusDot.className = `connection-dot ${state.online ? "is-online" : "is-offline"}`;
-    dom.sidebarStatus.textContent = state.online ? "Collector verbunden" : "Collector offline";
-    dom.sidebarStatusDetail.textContent = state.online
-      ? hasProblems
-        ? `${asNumber(state.summary.error) + asNumber(state.summary.stale)} Server prüfen`
-        : "Alle Dienste erreichbar"
-      : "Verbindung unterbrochen";
     dom.syncLabel.textContent = state.lastSync
       ? `Synchronisiert ${state.lastSync.toLocaleTimeString("de-DE", { hour: "2-digit", minute: "2-digit" })}`
       : "Noch nicht synchronisiert";
@@ -538,12 +803,24 @@
     renderNavigation();
     closeMobileMenu();
 
+    if (state.route.name === "users" && !state.currentUser?.is_admin) {
+      showToast("Kein Zugriff", "Diese Ansicht ist nur für Administratoren.", "error");
+      window.location.hash = "#/overview";
+      return;
+    }
+
     switch (state.route.name) {
       case "peers":
         renderPeers(state.viewNonce);
         break;
       case "settings":
         renderSettings(state.viewNonce);
+        break;
+      case "account":
+        renderAccount(state.viewNonce);
+        break;
+      case "users":
+        renderUsers(state.viewNonce);
         break;
       case "server":
         renderServerDetail(state.route.server);
@@ -994,10 +1271,11 @@
     dom.main.innerHTML = '<div class="page-loading" role="status"><span class="spinner" aria-hidden="true"></span><span>Daten werden geladen …</span></div>';
   }
 
+  // ── Peers ────────────────────────────────────────────────────────────────
   async function renderPeers(nonce) {
     renderViewLoading("Peers", "Verwaltung");
     try {
-      const peers = await api("/api/peers", { auth: true });
+      const peers = await api("/api/peers");
       if (nonce !== state.viewNonce || state.route.name !== "peers") return;
       renderPeersPage(Array.isArray(peers) ? peers : []);
     } catch (error) {
@@ -1153,7 +1431,7 @@
   }
 
   async function refreshPeerList() {
-    const peers = await api("/api/peers", { auth: true });
+    const peers = await api("/api/peers");
     const list = document.querySelector("#peer-list");
     const count = document.querySelector("#peer-list-count");
     if (list) list.innerHTML = renderPeerList(Array.isArray(peers) ? peers : []);
@@ -1184,11 +1462,7 @@
     submit.disabled = true;
     errorElement.textContent = "";
     try {
-      const result = await api("/api/peers", {
-        auth: true,
-        method: "POST",
-        body: JSON.stringify(body),
-      });
+      const result = await api("/api/peers", { method: "POST", body: JSON.stringify(body) });
       showEnrollment(result.command);
       await refreshPeerList();
       showToast("Peer angelegt", `${body.name} kann jetzt enrolled werden.`, "success");
@@ -1210,7 +1484,7 @@
     if (!confirmed) return;
 
     try {
-      await api(`/api/peers/${encodeURIComponent(name)}`, { auth: true, method: "DELETE" });
+      await api(`/api/peers/${encodeURIComponent(name)}`, { method: "DELETE" });
       await refreshPeerList();
       showToast("Peer gelöscht", `${name} wurde aus der Verwaltung entfernt.`, "success");
     } catch (error) {
@@ -1218,10 +1492,11 @@
     }
   }
 
+  // ── Settings ─────────────────────────────────────────────────────────────
   async function renderSettings(nonce) {
     renderViewLoading("Einstellungen", "System");
     try {
-      const version = await api("/api/settings/version", { auth: true, timeout: 30_000 });
+      const version = await api("/api/settings/version", { timeout: 30_000 });
       if (nonce !== state.viewNonce || state.route.name !== "settings") return;
       renderSettingsPage(version);
       loadUpdateLog();
@@ -1241,7 +1516,7 @@
       <section class="page-heading">
         <div>
           <h1>System &amp; Updates</h1>
-          <p>Softwarestand, Update-Protokoll und lokale Admin-Sitzung verwalten.</p>
+          <p>Softwarestand und Update-Protokoll des Dashboards.</p>
         </div>
         <div class="page-heading-actions">
           <button class="button button-secondary" type="button" data-action="refresh-settings">Erneut prüfen</button>
@@ -1289,21 +1564,9 @@
           <dl class="info-list">
             <div class="info-row"><dt>Repository</dt><dd>${escapeHtml(version.repo_dir || "–")}</dd></div>
             <div class="info-row"><dt>Stale-Schwelle</dt><dd>${asNumber(version.stale_hours)} Stunden</dd></div>
-            <div class="info-row"><dt>Agent-Updates</dt><dd>/agent/script</dd></div>
+            <div class="info-row"><dt>Agent-Updates</dt><dd>/agent/scripts/*</dd></div>
             <div class="info-row"><dt>Update-Verfahren</dt><dd>Fetch · Deploy · Restart · Rollback</dd></div>
           </dl>
-        </section>
-
-        <section class="panel" aria-labelledby="session-title">
-          <div class="panel-header"><div class="panel-title"><h3 id="session-title">Admin-Sitzung</h3><p>Lokaler Browserzugriff</p></div></div>
-          <div class="session-panel">
-            <div class="session-state">
-              <span class="connection-dot is-online" aria-hidden="true"></span>
-              <strong>Admin-Bereich entsperrt</strong>
-            </div>
-            <p>Tokenspeicherung: ${escapeHtml(tokenStorageMode())}. Beim Sperren wird der Token aus diesem Browser entfernt.</p>
-            <button class="button button-danger-subtle" type="button" data-action="lock-session">Sitzung sperren</button>
-          </div>
         </section>
       </div>`;
   }
@@ -1312,7 +1575,7 @@
     const log = document.querySelector("#update-log");
     if (!log) return;
     try {
-      log.textContent = await api("/api/settings/update-log", { auth: true, responseType: "text" });
+      log.textContent = await api("/api/settings/update-log", { responseType: "text" });
       log.scrollTop = log.scrollHeight;
     } catch (error) {
       log.textContent = `Log nicht verfügbar: ${error.message}`;
@@ -1334,7 +1597,7 @@
     if (message) message.textContent = "Update wird gestartet …";
 
     try {
-      const result = await api("/api/settings/update", { auth: true, method: "POST" });
+      const result = await api("/api/settings/update", { method: "POST" });
       if (message) message.textContent = result.message || "Update gestartet. Warte auf den Neustart …";
       state.updatePolling = true;
       await pollForUpdate(previousCommit);
@@ -1353,10 +1616,7 @@
       await sleep(3_000);
       const message = document.querySelector("#update-message");
       try {
-        const version = await api("/api/settings/version", {
-          auth: true,
-          timeout: 20_000,
-        });
+        const version = await api("/api/settings/version", { timeout: 20_000 });
         const installedCommit = version.installed?.commit || "";
         if (installedCommit && installedCommit !== previousCommit && !version.update_available) {
           if (message) message.textContent = "Update erfolgreich. Die Oberfläche wird neu geladen …";
@@ -1385,15 +1645,389 @@
     loadUpdateLog();
   }
 
+  // ── Account (self-service: password, TOTP, passkeys) ───────────────────
+  async function renderAccount(nonce) {
+    renderViewLoading("Konto", "Verwaltung");
+    try {
+      const account = await api("/api/account");
+      if (nonce !== state.viewNonce || state.route.name !== "account") return;
+      renderAccountPage(account);
+    } catch (error) {
+      if (nonce !== state.viewNonce) return;
+      renderSectionError("Konto nicht verfügbar", error.message, "account");
+    }
+  }
+
+  function renderAccountPage(account) {
+    setPageMeta("Konto", "Verwaltung");
+    const user = account.user;
+    const webauthn = account.webauthn;
+
+    dom.main.innerHTML = `
+      <section class="page-heading">
+        <div>
+          <h1>Konto</h1>
+          <p>Passwort, Zwei-Faktor-Authentifizierung und Passkeys für Ihr eigenes Konto verwalten.</p>
+        </div>
+      </section>
+
+      <div class="settings-grid">
+        <section class="panel" aria-labelledby="profile-title">
+          <div class="panel-header"><div class="panel-title"><h3 id="profile-title">Profil</h3><p>Kontoinformationen</p></div></div>
+          <dl class="info-list">
+            <div class="info-row"><dt>Benutzername</dt><dd>${escapeHtml(user.username)}</dd></div>
+            <div class="info-row"><dt>Rolle</dt><dd>${user.is_admin ? "Administrator" : "Benutzer"}</dd></div>
+            <div class="info-row"><dt>Angelegt</dt><dd>${escapeHtml(formatDateTime(user.created_ts))}</dd></div>
+            <div class="info-row"><dt>Letzte Anmeldung</dt><dd>${user.last_login_ts ? escapeHtml(formatDateTime(user.last_login_ts)) : "–"}</dd></div>
+          </dl>
+        </section>
+
+        <section class="panel" aria-labelledby="password-title">
+          <div class="panel-header"><div class="panel-title"><h3 id="password-title">Passwort ändern</h3><p>Meldet alle Sitzungen danach ab</p></div></div>
+          <form class="form-panel" id="password-form">
+            <div class="form-grid">
+              <label class="field field-wide">
+                <span>Aktuelles Passwort</span>
+                <input name="current_password" type="password" required autocomplete="current-password">
+              </label>
+              <label class="field field-wide">
+                <span>Neues Passwort</span>
+                <input name="new_password" type="password" required minlength="10" autocomplete="new-password">
+                <small class="field-hint">Mindestens 10 Zeichen.</small>
+              </label>
+            </div>
+            <p class="form-error" id="password-form-error" role="alert"></p>
+            <div class="form-actions">
+              <button class="button button-primary" type="submit">Passwort ändern</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel" aria-labelledby="totp-title">
+          <div class="panel-header">
+            <div class="panel-title"><h3 id="totp-title">Zwei-Faktor-Authentifizierung</h3><p>Zeitbasierter Code (TOTP)</p></div>
+            <span class="status-badge ${user.totp_enabled ? "is-ok" : "is-neutral"}">${user.totp_enabled ? "Aktiv" : "Inaktiv"}</span>
+          </div>
+          <div class="session-panel" id="totp-panel">
+            ${user.totp_enabled ? `
+              <p>Zwei-Faktor-Authentifizierung ist für Ihr Konto aktiv. Zum Deaktivieren ist Ihr Passwort erforderlich.</p>
+              <form id="totp-disable-form" class="form-panel-inline">
+                <label class="field"><span>Aktuelles Passwort</span><input name="current_password" type="password" required autocomplete="current-password"></label>
+                <p class="form-error" id="totp-disable-error" role="alert"></p>
+                <button class="button button-danger-subtle" type="submit">Zwei-Faktor-Authentifizierung deaktivieren</button>
+              </form>` : `
+              <p>Schützen Sie Ihr Konto zusätzlich mit einer Authenticator-App (z. B. Aegis, Google Authenticator, 1Password).</p>
+              <button class="button button-primary" type="button" data-action="start-totp-setup">${icon("smartphone")}<span>Aktivieren</span></button>
+              <div id="totp-setup-output"></div>`}
+          </div>
+        </section>
+
+        <section class="panel" aria-labelledby="passkeys-title">
+          <div class="panel-header">
+            <div class="panel-title"><h3 id="passkeys-title">Passkeys</h3><p>Passwortlose Anmeldung per Gerät</p></div>
+            ${webauthn.available ? `<button class="button button-secondary button-small" type="button" data-action="start-passkey-registration">${icon("plus")}<span>Passkey</span></button>` : ""}
+          </div>
+          <div id="passkey-list">${renderPasskeyList(account.webauthn_credentials)}</div>
+          ${!webauthn.available ? `
+            <p class="field-hint webauthn-hint">
+              Passkeys benötigen HTTPS oder den Hostnamen „localhost" —
+              ${webauthn.secure_context ? "über eine IP-Adresse ist das laut Browser-Spezifikation nicht möglich." : "diese Verbindung ist aktuell nicht ausreichend abgesichert."}
+            </p>` : ""}
+        </section>
+      </div>`;
+  }
+
+  function renderPasskeyList(credentials) {
+    if (!credentials.length) {
+      return '<div class="empty-state empty-state-compact"><div><h3>Noch keine Passkeys</h3><p>Registrierte Passkeys erscheinen hier.</p></div></div>';
+    }
+    return `
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Name</th><th class="hide-mobile">Angelegt</th><th class="hide-mobile">Zuletzt verwendet</th><th><span class="sr-only">Aktionen</span></th></tr></thead>
+          <tbody>
+            ${credentials.map((cred) => `
+              <tr>
+                <td><span class="peer-name">${escapeHtml(cred.nickname)}</span></td>
+                <td class="mono hide-mobile">${escapeHtml(formatDateTime(cred.created_ts))}</td>
+                <td class="mono hide-mobile">${cred.last_used_ts ? escapeHtml(formatDateTime(cred.last_used_ts)) : "nie"}</td>
+                <td class="table-actions">
+                  <button class="button button-danger-subtle button-small" type="button" data-action="delete-passkey" data-id="${cred.id}">
+                    ${icon("trash")}<span>Entfernen</span>
+                  </button>
+                </td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  async function submitPasswordForm(form) {
+    const submit = form.querySelector('button[type="submit"]');
+    const errorElement = document.querySelector("#password-form-error");
+    const data = new FormData(form);
+    const body = {
+      current_password: String(data.get("current_password") || ""),
+      new_password: String(data.get("new_password") || ""),
+    };
+    submit.disabled = true;
+    errorElement.textContent = "";
+    try {
+      const result = await api("/api/account/password", { method: "POST", body: JSON.stringify(body) });
+      showToast("Passwort geändert", result.message, "success");
+      await logout();
+    } catch (error) {
+      errorElement.textContent = error.message;
+      submit.disabled = false;
+    }
+  }
+
+  async function startTotpSetup() {
+    try {
+      const data = await api("/api/account/totp/setup", { method: "POST" });
+      const output = document.querySelector("#totp-setup-output");
+      if (!output) return;
+      output.innerHTML = `
+        <div class="totp-setup-box">
+          <p>Scannen Sie den QR-Code mit Ihrer Authenticator-App oder geben Sie den Schlüssel manuell ein.</p>
+          <div class="totp-qr">${data.qr_svg}</div>
+          <code class="totp-secret">${escapeHtml(data.secret)}</code>
+          <form id="totp-confirm-form" class="form-panel-inline">
+            <label class="field"><span>Bestätigungscode</span><input name="code" inputmode="numeric" pattern="[0-9]{6,10}" maxlength="10" required autocomplete="one-time-code"></label>
+            <p class="form-error" id="totp-confirm-error" role="alert"></p>
+            <button class="button button-primary" type="submit">Bestätigen und aktivieren</button>
+          </form>
+        </div>`;
+    } catch (error) {
+      showToast("TOTP-Einrichtung fehlgeschlagen", error.message, "error");
+    }
+  }
+
+  async function submitTotpConfirmForm(form) {
+    const submit = form.querySelector('button[type="submit"]');
+    const errorElement = document.querySelector("#totp-confirm-error");
+    const code = String(new FormData(form).get("code") || "").trim();
+    submit.disabled = true;
+    errorElement.textContent = "";
+    try {
+      await api("/api/account/totp/confirm", { method: "POST", body: JSON.stringify({ code }) });
+      showToast("Zwei-Faktor-Authentifizierung aktiviert", "", "success");
+      state.viewNonce += 1;
+      await renderAccount(state.viewNonce);
+    } catch (error) {
+      errorElement.textContent = error.message;
+      submit.disabled = false;
+    }
+  }
+
+  async function submitTotpDisableForm(form) {
+    const submit = form.querySelector('button[type="submit"]');
+    const errorElement = document.querySelector("#totp-disable-error");
+    const currentPassword = String(new FormData(form).get("current_password") || "");
+    submit.disabled = true;
+    errorElement.textContent = "";
+    try {
+      await api("/api/account/totp/disable", { method: "POST", body: JSON.stringify({ current_password: currentPassword }) });
+      showToast("Zwei-Faktor-Authentifizierung deaktiviert", "", "success");
+      state.viewNonce += 1;
+      await renderAccount(state.viewNonce);
+    } catch (error) {
+      errorElement.textContent = error.message;
+      submit.disabled = false;
+    }
+  }
+
+  async function startPasskeyRegistration() {
+    const nickname = window.prompt("Name für diesen Passkey (z. B. YubiKey oder iPhone):", "Passkey");
+    if (nickname === null) return;
+    try {
+      const optionsResponse = await api("/api/account/webauthn/register/options", { method: "POST" });
+      const credential = await navigator.credentials.create({
+        publicKey: creationOptionsFromServer(optionsResponse.options),
+      });
+      await api("/api/account/webauthn/register/verify", {
+        method: "POST",
+        body: JSON.stringify({
+          challenge_token: optionsResponse.challenge_token,
+          credential: registrationCredentialToJSON(credential),
+          nickname: nickname.trim() || "Passkey",
+        }),
+      });
+      showToast("Passkey hinzugefügt", nickname, "success");
+      state.viewNonce += 1;
+      await renderAccount(state.viewNonce);
+    } catch (error) {
+      showToast("Passkey konnte nicht hinzugefügt werden", describeWebauthnError(error), "error");
+    }
+  }
+
+  async function deletePasskey(id) {
+    const confirmed = await confirmAction({
+      eyebrow: "Passkey entfernen",
+      title: "Diesen Passkey entfernen?",
+      message: "Das Gerät kann sich danach nicht mehr mit diesem Passkey anmelden.",
+      confirmLabel: "Entfernen",
+      danger: true,
+    });
+    if (!confirmed) return;
+    try {
+      await api(`/api/account/webauthn/${id}`, { method: "DELETE" });
+      state.viewNonce += 1;
+      await renderAccount(state.viewNonce);
+      showToast("Passkey entfernt", "", "success");
+    } catch (error) {
+      showToast("Passkey konnte nicht entfernt werden", error.message, "error");
+    }
+  }
+
+  // ── User management (admin only) ────────────────────────────────────────
+  async function renderUsers(nonce) {
+    renderViewLoading("Benutzer", "Verwaltung");
+    try {
+      const users = await api("/api/users");
+      if (nonce !== state.viewNonce || state.route.name !== "users") return;
+      renderUsersPage(Array.isArray(users) ? users : []);
+    } catch (error) {
+      if (nonce !== state.viewNonce) return;
+      renderSectionError("Benutzerverwaltung nicht verfügbar", error.message, "users");
+    }
+  }
+
+  function renderUsersPage(users) {
+    setPageMeta("Benutzer", "Verwaltung");
+    dom.main.innerHTML = `
+      <section class="page-heading">
+        <div>
+          <h1>Benutzerverwaltung</h1>
+          <p>Zusätzliche Konten für das Dashboard anlegen und verwalten.</p>
+        </div>
+      </section>
+
+      <div class="admin-grid">
+        <section class="panel" aria-labelledby="new-user-title">
+          <div class="panel-header">
+            <div class="panel-title"><h3 id="new-user-title">Benutzer anlegen</h3><p>Vergibt ein Konto mit Passwort-Login</p></div>
+          </div>
+          <form class="form-panel" id="user-form">
+            <div class="form-grid">
+              <label class="field">
+                <span>Benutzername</span>
+                <input name="username" required minlength="3" maxlength="64" pattern="[A-Za-z0-9._-]{3,64}" autocomplete="off">
+              </label>
+              <label class="field">
+                <span>Passwort</span>
+                <input name="password" type="password" required minlength="10" autocomplete="new-password">
+              </label>
+              <label class="check-field field-wide">
+                <input type="checkbox" name="is_admin">
+                <span>Administrator (kann Benutzer verwalten)</span>
+              </label>
+            </div>
+            <p class="form-error" id="user-form-error" role="alert"></p>
+            <div class="form-actions">
+              <button class="button button-primary" type="submit">Benutzer anlegen</button>
+            </div>
+          </form>
+        </section>
+
+        <section class="panel" aria-labelledby="user-list-title">
+          <div class="panel-header">
+            <div class="panel-title"><h3 id="user-list-title">Registrierte Benutzer</h3><p><span id="user-list-count">${users.length}</span> Konten</p></div>
+          </div>
+          <div id="user-list">${renderUserList(users)}</div>
+        </section>
+      </div>`;
+  }
+
+  function renderUserList(users) {
+    return `
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead><tr><th>Benutzer</th><th>Rolle</th><th class="hide-mobile">2FA / Passkeys</th><th class="hide-mobile">Letzte Anmeldung</th><th><span class="sr-only">Aktionen</span></th></tr></thead>
+          <tbody>
+            ${users.map((user) => `
+              <tr>
+                <td>
+                  <span class="peer-name">${escapeHtml(user.username)}</span>
+                  ${user.id === state.currentUser?.id ? '<small class="secondary-line">Sie</small>' : ""}
+                </td>
+                <td><span class="status-badge ${user.is_admin ? "is-info" : "is-neutral"}">${user.is_admin ? "Administrator" : "Benutzer"}</span></td>
+                <td class="mono hide-mobile">${user.totp_enabled ? "TOTP" : "–"}${user.webauthn_count ? ` · ${user.webauthn_count} Passkey(s)` : ""}</td>
+                <td class="mono hide-mobile">${user.last_login_ts ? escapeHtml(formatDateTime(user.last_login_ts)) : "nie"}</td>
+                <td class="table-actions">
+                  <button class="button button-danger-subtle button-small" type="button" data-action="delete-user" data-id="${user.id}" data-username="${escapeHtml(user.username)}">
+                    ${icon("trash")}<span>Löschen</span>
+                  </button>
+                </td>
+              </tr>`).join("")}
+          </tbody>
+        </table>
+      </div>`;
+  }
+
+  async function refreshUserList() {
+    const users = await api("/api/users");
+    const list = document.querySelector("#user-list");
+    const count = document.querySelector("#user-list-count");
+    if (list) list.innerHTML = renderUserList(Array.isArray(users) ? users : []);
+    if (count) count.textContent = String(Array.isArray(users) ? users.length : 0);
+  }
+
+  async function submitUserForm(form) {
+    const submit = form.querySelector('button[type="submit"]');
+    const errorElement = document.querySelector("#user-form-error");
+    if (!form.reportValidity()) return;
+    const data = new FormData(form);
+    const body = {
+      username: String(data.get("username") || "").trim(),
+      password: String(data.get("password") || ""),
+      is_admin: data.get("is_admin") === "on",
+    };
+    submit.disabled = true;
+    errorElement.textContent = "";
+    try {
+      await api("/api/users", { method: "POST", body: JSON.stringify(body) });
+      form.reset();
+      await refreshUserList();
+      showToast("Benutzer angelegt", body.username, "success");
+    } catch (error) {
+      errorElement.textContent = error.message;
+    } finally {
+      submit.disabled = false;
+    }
+  }
+
+  async function deleteUser(id, username) {
+    const confirmed = await confirmAction({
+      eyebrow: "Benutzerverwaltung",
+      title: `${username} löschen?`,
+      message: "Das Konto und alle zugehörigen Sitzungen und Passkeys werden entfernt.",
+      confirmLabel: "Benutzer löschen",
+      danger: true,
+    });
+    if (!confirmed) return;
+    try {
+      await api(`/api/users/${id}`, { method: "DELETE" });
+      await refreshUserList();
+      showToast("Benutzer gelöscht", username, "success");
+    } catch (error) {
+      showToast("Benutzer konnte nicht gelöscht werden", error.message, "error");
+    }
+  }
+
   function renderSectionError(title, message, section) {
-    setPageMeta(section === "peers" ? "Peers" : "Einstellungen", "Verwaltung");
+    const eyebrowBySection = { peers: "Peers", settings: "Einstellungen", account: "Konto", users: "Benutzer" };
+    const refreshActionBySection = {
+      peers: "refresh-peers", settings: "refresh-settings", account: "refresh-account", users: "refresh-users",
+    };
+    setPageMeta(eyebrowBySection[section] || "Verwaltung", "Verwaltung");
     dom.main.innerHTML = `
       <div class="error-state">
         <div>
           <span class="error-state-icon" aria-hidden="true">${icon("alertTriangle")}</span>
           <h1>${escapeHtml(title)}</h1>
           <p>${escapeHtml(message)}</p>
-          <button class="button button-primary" type="button" data-action="${section === "peers" ? "refresh-peers" : "refresh-settings"}">Erneut versuchen</button>
+          <button class="button button-primary" type="button" data-action="${refreshActionBySection[section] || "refresh"}">Erneut versuchen</button>
         </div>
       </div>`;
   }
@@ -1410,15 +2044,6 @@
       input.select();
       document.execCommand("copy");
       input.remove();
-    }
-  }
-
-  function lockSession() {
-    clearToken();
-    state.updatePolling = false;
-    showToast("Admin-Sitzung gesperrt", "Der Token wurde aus diesem Browser entfernt.", "success");
-    if (state.route.name === "peers" || state.route.name === "settings") {
-      window.location.hash = "#/overview";
     }
   }
 
@@ -1464,14 +2089,21 @@
         });
         renderFleetResults();
         break;
-      case "cancel-auth":
-        cancelTokenRequest();
-        break;
-      case "lock-session":
-        lockSession();
-        break;
       case "dismiss-toast":
         button.closest(".toast")?.remove();
+        break;
+      case "logout":
+        await logout();
+        break;
+      case "login-with-passkey":
+        await loginWithPasskeyDirect();
+        break;
+      case "login-with-passkey-mfa":
+        await loginWithPasskeyStepUp();
+        break;
+      case "back-to-login":
+        state.authView = { kind: "login" };
+        renderAuthView();
         break;
       case "show-enroll": {
         const key = decodeData(button.dataset.key);
@@ -1496,11 +2128,31 @@
         state.viewNonce += 1;
         await renderSettings(state.viewNonce);
         break;
+      case "refresh-account":
+        state.viewNonce += 1;
+        await renderAccount(state.viewNonce);
+        break;
+      case "refresh-users":
+        state.viewNonce += 1;
+        await renderUsers(state.viewNonce);
+        break;
       case "refresh-log":
         await loadUpdateLog();
         break;
       case "install-update":
         await installUpdate(decodeData(button.dataset.installed));
+        break;
+      case "start-totp-setup":
+        await startTotpSetup();
+        break;
+      case "start-passkey-registration":
+        await startPasskeyRegistration();
+        break;
+      case "delete-passkey":
+        await deletePasskey(Number(button.dataset.id));
+        break;
+      case "delete-user":
+        await deleteUser(Number(button.dataset.id), decodeData(button.dataset.username));
         break;
       default:
         break;
@@ -1510,8 +2162,10 @@
   function bindEvents() {
     window.addEventListener("hashchange", () => {
       state.route = parseRoute();
-      renderCurrentView();
-      dom.main.focus({ preventScroll: true });
+      if (state.currentUser) {
+        renderCurrentView();
+        dom.main.focus({ preventScroll: true });
+      }
     });
 
     document.addEventListener("click", (event) => {
@@ -1531,26 +2185,21 @@
     });
 
     document.addEventListener("submit", (event) => {
-      if (event.target.id === "peer-form") {
-        event.preventDefault();
-        submitPeerForm(event.target);
-      }
-    });
-
-    dom.authForm.addEventListener("submit", (event) => {
+      const form = event.target;
+      const handlers = {
+        "peer-form": submitPeerForm,
+        "setup-form": submitSetupForm,
+        "login-form": submitLoginForm,
+        "totp-login-form": submitTotpLoginForm,
+        "password-form": submitPasswordForm,
+        "totp-confirm-form": submitTotpConfirmForm,
+        "totp-disable-form": submitTotpDisableForm,
+        "user-form": submitUserForm,
+      };
+      const handler = handlers[form.id];
+      if (!handler) return;
       event.preventDefault();
-      const token = dom.authToken.value.trim();
-      if (!token || !authRequest) return;
-      storeToken(token, dom.authRemember.checked);
-      const request = authRequest;
-      authRequest = null;
-      dom.authDialog.close();
-      request.resolve(token);
-    });
-
-    dom.authDialog.addEventListener("cancel", (event) => {
-      event.preventDefault();
-      cancelTokenRequest();
+      handler(form);
     });
 
     document.addEventListener("keydown", (event) => {
@@ -1563,16 +2212,26 @@
 
   async function init() {
     initializeTheme();
-    updateSessionControls();
     bindEvents();
     state.route = parseRoute();
     if (!window.location.hash) window.history.replaceState(null, "", "#/overview");
+
+    await checkAuthStatus();
+
+    if (!state.currentUser) {
+      showAuthScreen();
+      renderAuthView();
+      return;
+    }
+
+    showAppShell();
     renderNavigation();
     updateConnectionState();
     await refreshData({ render: true });
-    if (state.route.name === "peers" || state.route.name === "settings") renderCurrentView();
+    if (["peers", "settings", "account", "users"].includes(state.route.name)) renderCurrentView();
 
     window.setInterval(() => {
+      if (!state.currentUser) return;
       refreshData({
         render: state.route.name === "overview" || state.route.name === "server",
       });

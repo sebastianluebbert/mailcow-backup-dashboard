@@ -169,6 +169,14 @@ svg.icon {
   min-height: 100vh;
 }
 
+/* The [hidden] attribute alone is not enough once an element also has a
+   class that sets `display`, since author rules always win over the
+   user-agent's `[hidden] { display: none }` default. */
+.app-shell[hidden],
+.auth-screen[hidden] {
+  display: none;
+}
+
 .sidebar-backdrop {
   display: none;
 }
@@ -354,28 +362,53 @@ svg.icon {
   gap: 10px;
 }
 
-.collector-state {
+.account-chip {
   display: flex;
   min-width: 0;
   flex: 1;
   align-items: center;
+  padding: 5px;
+  border-radius: 9px;
   gap: 9px;
+  text-decoration: none;
+  transition: background 120ms ease;
 }
 
-.collector-state-text strong,
-.collector-state-text small {
+.account-chip:hover {
+  background: var(--chrome-hover);
+}
+
+.account-avatar {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--chrome-active-bg);
+  color: #a9bcff;
+  font: 700 10.5px var(--font-mono);
+  text-transform: uppercase;
+}
+
+.account-chip-text {
+  min-width: 0;
+}
+
+.account-chip-text strong,
+.account-chip-text small {
   display: block;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.collector-state-text strong {
+.account-chip-text strong {
   color: var(--chrome-text);
   font-size: 11px;
 }
 
-.collector-state-text small {
+.account-chip-text small {
   color: var(--chrome-text-muted);
   font-size: 10px;
 }
@@ -1336,6 +1369,12 @@ button:disabled {
   padding: 18px;
 }
 
+.form-panel-inline {
+  display: grid;
+  margin-top: 14px;
+  gap: 10px;
+}
+
 .form-grid {
   display: grid;
   gap: 14px;
@@ -1494,6 +1533,121 @@ button:disabled {
   display: flex;
   justify-content: flex-end;
   gap: 6px;
+}
+
+/* ==========================================================================
+   Auth screen (setup / login / 2FA)
+   ========================================================================== */
+.auth-screen {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: 24px;
+  background: var(--chrome-bg);
+}
+
+.auth-card {
+  width: 100%;
+  max-width: 420px;
+  padding: 30px;
+  border: 1px solid var(--chrome-border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  box-shadow: var(--shadow-lg);
+}
+
+.auth-brand {
+  display: flex;
+  align-items: center;
+  margin-bottom: 26px;
+  gap: 12px;
+}
+
+#auth-content h1 {
+  margin: 3px 0 6px;
+  font-size: 20px;
+  letter-spacing: -0.02em;
+}
+
+.auth-lead {
+  margin: 0 0 16px;
+  color: var(--muted);
+}
+
+.auth-form {
+  display: grid;
+  margin-top: 6px;
+  gap: 14px;
+}
+
+.auth-submit {
+  width: 100%;
+  justify-content: center;
+  margin-top: 2px;
+}
+
+.auth-divider {
+  display: flex;
+  align-items: center;
+  margin: 18px 0;
+  color: var(--muted-strong);
+  font-size: 10.5px;
+  gap: 10px;
+}
+
+.auth-divider::before,
+.auth-divider::after {
+  flex: 1;
+  height: 1px;
+  background: var(--border);
+  content: "";
+}
+
+.totp-setup-box {
+  margin-top: 14px;
+  padding: 16px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface-inset);
+}
+
+.totp-qr {
+  display: grid;
+  max-width: 200px;
+  margin: 10px auto 14px;
+  padding: 10px;
+  border-radius: 10px;
+  background: #fff;
+  place-items: center;
+}
+
+.totp-qr svg {
+  width: 100%;
+  height: auto;
+}
+
+.totp-secret {
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  margin: 0 auto 14px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+  color: var(--text-soft);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  text-align: center;
+  word-break: break-all;
+}
+
+.webauthn-hint {
+  margin: 0;
+  padding: 0 18px 16px;
+  color: var(--muted);
+  font-size: 11px;
 }
 
 /* ==========================================================================
