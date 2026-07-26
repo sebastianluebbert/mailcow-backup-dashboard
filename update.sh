@@ -38,6 +38,8 @@ echo "Update: $BEFORE -> $AFTER"
 
 # Server-Dateien deployen
 install -m 644 server/app.py            "$APP/app.py"
+install -m 644 server/db.py             "$APP/db.py"
+install -m 644 server/auth.py           "$APP/auth.py"
 install -m 644 server/requirements.txt   "$APP/requirements.txt"
 install -m 644 server/static/index.html "$APP/static/index.html"
 install -m 644 server/static/styles.css "$APP/static/styles.css"
@@ -64,6 +66,12 @@ else
   echo "✖ FEHLER: Dienst startet nicht — Rollback auf $BEFORE"
   git reset -q --hard "$BEFORE"
   install -m 644 server/app.py            "$APP/app.py"
+  if [ -f server/db.py ]; then
+    install -m 644 server/db.py   "$APP/db.py"
+    install -m 644 server/auth.py "$APP/auth.py"
+  else
+    rm -f "$APP/db.py" "$APP/auth.py"
+  fi
   install -m 644 server/static/index.html "$APP/static/index.html"
   mkdir -p "$APP/agent/lib"
   install -m 644 agent/mailcow-backup.sh   "$APP/agent/mailcow-backup.sh"
