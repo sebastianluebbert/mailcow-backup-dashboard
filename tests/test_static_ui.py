@@ -77,7 +77,7 @@ class EnterpriseUiContractTests(unittest.TestCase):
             self.assertEqual(inline_events, [], f"Inline event handler found on <{tag}>")
 
     def test_deploy_scripts_include_all_ui_assets(self):
-        assets = ("index.html", "styles.css", "app.js", "requirements.txt")
+        assets = ("index.html", "styles.css", "app.js", "requirements.txt", "db.py", "auth.py")
         for script_path in ("server/install-server.sh", "update.sh"):
             contents = (ROOT / script_path).read_text(encoding="utf-8")
             for asset in assets:
