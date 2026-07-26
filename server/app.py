@@ -7,10 +7,19 @@ Endpoints:
   GET  /api/servers        — fleet state + per-server history & checks
   GET  /api/summary        — aggregated KPIs for the fleet
   GET  /api/health         — plain health endpoint (Uptime-Kuma friendly)
+  /api/auth/*, /api/account/*, /api/users/*
+                            — human user accounts: login, TOTP, passkeys,
+                              user management (session-cookie protected)
   GET  /api/peers          — protected peer administration
   GET  /api/settings/*     — protected version, update and log operations
   GET  /agent/scripts/{n}  — protected suite component download (self-update)
   GET  /               — dashboard UI
+
+Two independent auth models are in play:
+  - Bearer token (DASH_TOKEN) for machine agents: POST /api/report,
+    GET /agent/scripts/*, GET /agent/script.
+  - Session cookie (human users, see auth.py) for everything an admin does
+    in the browser: peers, settings/updates, account & user management.
 """
 import asyncio
 import json as _json
@@ -24,19 +33,33 @@ from collections import deque
 from contextlib import closing
 from typing import Any
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request, Response
 from fastapi.responses import FileResponse, JSONResponse, PlainTextResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field, field_validator
 
-BASE = os.path.dirname(os.path.abspath(__file__))
-DB = os.environ.get("DASH_DB", os.path.join(BASE, "data", "backups.db"))
+import auth
+from db import BASE, db
+
 API_TOKEN = os.environ.get("DASH_TOKEN", "")
-ADMIN_TOKEN = os.environ.get("DASH_ADMIN_TOKEN", API_TOKEN)
 STALE_HOURS = int(os.environ.get("DASH_STALE_HOURS", "26"))
 REPORT_KINDS = {"backup", "verify", "watchdog"}
 
 app = FastAPI(title="Mailcow Backup Dashboard", docs_url=None, redoc_url=None)
+
+
+@app.on_event("startup")
+async def bootstrap_admin_user():
+    """Creates the initial admin account from env vars, if configured and no
+    users exist yet. Purely additive/idempotent — safe to leave the env vars
+    set permanently, they only ever act once."""
+    username = os.environ.get("DASH_BOOTSTRAP_USER", "").strip()
+    password = os.environ.get("DASH_BOOTSTRAP_PASSWORD", "")
+    if not username or not password:
+        return
+    with closing(db()) as conn:
+        if auth.count_users(conn) == 0:
+            auth.create_user(conn, username, password, is_admin=True)
 
 
 @app.middleware("http")
@@ -68,46 +91,6 @@ def require_token(authorization: str, expected: str):
     supplied = authorization[len(prefix):] if authorization.startswith(prefix) else ""
     if not expected or not supplied or not secrets.compare_digest(supplied, expected):
         raise HTTPException(401, "invalid token")
-
-
-def _ensure_column(conn: sqlite3.Connection, table: str, column: str, decl: str):
-    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
-    if column not in columns:
-        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
-
-
-def db():
-    os.makedirs(os.path.dirname(DB), exist_ok=True)
-    conn = sqlite3.connect(DB)
-    conn.row_factory = sqlite3.Row
-    conn.execute("""CREATE TABLE IF NOT EXISTS reports (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        server TEXT NOT NULL,
-        kind TEXT NOT NULL DEFAULT 'backup',
-        ts INTEGER NOT NULL,
-        status TEXT NOT NULL,
-        duration_s INTEGER,
-        backup_gb REAL,
-        repo_gb REAL,
-        dedup_gb REAL,
-        archives INTEGER,
-        components TEXT,
-        message TEXT
-    )""")
-    # Additive migration for databases created before "kind"/"components"
-    # existed — safe to run on every connection (PRAGMA lookup is cheap).
-    _ensure_column(conn, "reports", "kind", "TEXT NOT NULL DEFAULT 'backup'")
-    _ensure_column(conn, "reports", "components", "TEXT")
-    conn.execute("CREATE INDEX IF NOT EXISTS idx_server_kind_ts ON reports(server, kind, ts DESC)")
-    conn.execute("""CREATE TABLE IF NOT EXISTS peers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        name TEXT UNIQUE NOT NULL,
-        created_ts INTEGER NOT NULL,
-        enroll_key TEXT UNIQUE NOT NULL,
-        enrolled_ts INTEGER,
-        config TEXT NOT NULL
-    )""")
-    return conn
 
 
 class Report(BaseModel):
@@ -276,6 +259,323 @@ async def health():
 app.mount("/static", StaticFiles(directory=os.path.join(BASE, "static")), name="static")
 
 
+# ── Authentication: login, 2FA (TOTP), passkeys (WebAuthn) ──────────────────
+USERNAME_PATTERN = r"^[A-Za-z0-9._-]{3,64}$"
+
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
+class SetupRequest(BaseModel):
+    username: str = Field(pattern=USERNAME_PATTERN)
+    password: str = Field(min_length=auth.MIN_PASSWORD_LENGTH, max_length=200)
+
+
+class TotpLoginRequest(BaseModel):
+    login_token: str
+    code: str = Field(min_length=6, max_length=10)
+
+
+class WebAuthnLoginOptionsRequest(BaseModel):
+    login_token: str | None = None
+    username: str | None = None
+
+
+class WebAuthnVerifyRequest(BaseModel):
+    state_token: str
+    login_token: str | None = None
+    credential: dict[str, Any]
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str
+    new_password: str = Field(min_length=auth.MIN_PASSWORD_LENGTH, max_length=200)
+
+
+class TotpConfirmRequest(BaseModel):
+    code: str = Field(min_length=6, max_length=10)
+
+
+class TotpDisableRequest(BaseModel):
+    current_password: str
+
+
+class WebAuthnRegisterVerifyRequest(BaseModel):
+    challenge_token: str
+    credential: dict[str, Any]
+    nickname: str = Field(default="Passkey", max_length=100)
+
+
+class UserCreateRequest(BaseModel):
+    username: str = Field(pattern=USERNAME_PATTERN)
+    password: str = Field(min_length=auth.MIN_PASSWORD_LENGTH, max_length=200)
+    is_admin: bool = False
+
+
+def _webauthn_summary(context: dict) -> dict:
+    return {"secure_context": context["secure_context"], "available": context["available"]}
+
+
+@app.get("/api/auth/status")
+async def auth_status(request: Request):
+    with closing(db()) as conn:
+        needs_setup = auth.count_users(conn) == 0
+        session_user = None
+        if not needs_setup:
+            token = request.cookies.get(auth.SESSION_COOKIE, "")
+            session_user = auth.get_session(conn, token) if token else None
+    context = auth.resolve_webauthn_context(request)
+    return {
+        "needs_setup": needs_setup,
+        "authenticated": session_user is not None,
+        "user": auth.public_user(session_user) if session_user else None,
+        "webauthn": _webauthn_summary(context),
+    }
+
+
+@app.post("/api/auth/setup")
+async def auth_setup(body: SetupRequest, request: Request, response: Response):
+    with closing(db()) as conn:
+        if auth.count_users(conn) > 0:
+            raise HTTPException(409, "setup already completed")
+        user_id = auth.create_user(conn, body.username, body.password, is_admin=True)
+        auth.reset_failed_attempts(conn, user_id)
+        token = auth.create_session(conn, user_id, request.headers.get("user-agent", ""))
+        user = auth.get_user_by_id(conn, user_id)
+    auth.set_session_cookie(response, token, request)
+    return {"ok": True, "user": auth.public_user(user)}
+
+
+@app.post("/api/auth/login")
+async def auth_login(body: LoginRequest, request: Request, response: Response):
+    with closing(db()) as conn:
+        auth.purge_expired_challenges(conn)
+        user = auth.get_user_by_username(conn, body.username)
+        if not user:
+            raise HTTPException(401, "Benutzername oder Passwort ist falsch")
+        if auth.is_locked(user):
+            raise HTTPException(429, "Konto vorübergehend gesperrt — bitte später erneut versuchen")
+        if not auth.verify_password(body.password, user["password_hash"]):
+            auth.register_failed_attempt(conn, user["id"])
+            raise HTTPException(401, "Benutzername oder Passwort ist falsch")
+
+        has_webauthn = conn.execute(
+            "SELECT 1 FROM webauthn_credentials WHERE user_id=? LIMIT 1", (user["id"],)
+        ).fetchone() is not None
+        methods = []
+        if user["totp_enabled"]:
+            methods.append("totp")
+        if has_webauthn:
+            methods.append("webauthn")
+
+        if methods:
+            login_token = auth.create_challenge(conn, "mfa_pending", user["id"], {})
+            return {"mfa_required": True, "login_token": login_token, "methods": methods}
+
+        auth.reset_failed_attempts(conn, user["id"])
+        token = auth.create_session(conn, user["id"], request.headers.get("user-agent", ""))
+    auth.set_session_cookie(response, token, request)
+    return {"ok": True, "user": auth.public_user(user)}
+
+
+@app.post("/api/auth/login/totp")
+async def auth_login_totp(body: TotpLoginRequest, request: Request, response: Response):
+    with closing(db()) as conn:
+        pending = auth.peek_challenge(conn, body.login_token, "mfa_pending")
+        if not pending:
+            raise HTTPException(400, "Anmeldevorgang abgelaufen — bitte erneut anmelden")
+        user = auth.get_user_by_id(conn, pending["user_id"])
+        if not user or not user["totp_enabled"]:
+            raise HTTPException(400, "TOTP ist für dieses Konto nicht aktiviert")
+        if auth.is_locked(user):
+            raise HTTPException(429, "Konto vorübergehend gesperrt — bitte später erneut versuchen")
+        if not auth.verify_totp(user["totp_secret"], body.code):
+            auth.register_failed_attempt(conn, user["id"])
+            raise HTTPException(401, "Ungültiger Code")
+        auth.delete_challenge(conn, body.login_token)
+        auth.reset_failed_attempts(conn, user["id"])
+        token = auth.create_session(conn, user["id"], request.headers.get("user-agent", ""))
+    auth.set_session_cookie(response, token, request)
+    return {"ok": True, "user": auth.public_user(user)}
+
+
+@app.post("/api/auth/login/webauthn/options")
+async def auth_login_webauthn_options(body: WebAuthnLoginOptionsRequest, request: Request):
+    context = auth.resolve_webauthn_context(request)
+    if not context["available"]:
+        raise HTTPException(400, "Passkeys sind auf diesem Host nicht verfügbar")
+    with closing(db()) as conn:
+        user = None
+        if body.login_token:
+            pending = auth.peek_challenge(conn, body.login_token, "mfa_pending")
+            if not pending:
+                raise HTTPException(400, "Anmeldevorgang abgelaufen — bitte erneut anmelden")
+            user = auth.get_user_by_id(conn, pending["user_id"])
+        elif body.username:
+            user = auth.get_user_by_username(conn, body.username)
+        options, state_token = auth.webauthn_authentication_options(conn, context, user)
+    return {"options": options, "state_token": state_token}
+
+
+@app.post("/api/auth/login/webauthn/verify")
+async def auth_login_webauthn_verify(body: WebAuthnVerifyRequest, request: Request, response: Response):
+    context = auth.resolve_webauthn_context(request)
+    with closing(db()) as conn:
+        user = auth.webauthn_finish_authentication(conn, context, body.state_token, body.credential)
+        if body.login_token:
+            pending = auth.peek_challenge(conn, body.login_token, "mfa_pending")
+            if not pending or pending["user_id"] != user["id"]:
+                raise HTTPException(400, "Passkey gehört nicht zu diesem Anmeldeversuch")
+            auth.delete_challenge(conn, body.login_token)
+        if auth.is_locked(user):
+            raise HTTPException(429, "Konto vorübergehend gesperrt — bitte später erneut versuchen")
+        auth.reset_failed_attempts(conn, user["id"])
+        token = auth.create_session(conn, user["id"], request.headers.get("user-agent", ""))
+    auth.set_session_cookie(response, token, request)
+    return {"ok": True, "user": auth.public_user(user)}
+
+
+@app.post("/api/auth/logout")
+async def auth_logout(request: Request, response: Response):
+    token = request.cookies.get(auth.SESSION_COOKIE, "")
+    with closing(db()) as conn:
+        auth.delete_session(conn, token)
+    auth.clear_session_cookie(response)
+    return {"ok": True}
+
+
+# ── Account self-service (logged-in user) ───────────────────────────────────
+@app.get("/api/account")
+async def account_get(request: Request, user: sqlite3.Row = Depends(auth.require_user)):
+    context = auth.resolve_webauthn_context(request)
+    with closing(db()) as conn:
+        credentials = auth.list_webauthn_credentials(conn, user["id"])
+    return {
+        "user": auth.public_user(user),
+        "webauthn_credentials": credentials,
+        "webauthn": _webauthn_summary(context),
+    }
+
+
+@app.post("/api/account/password")
+async def account_change_password(body: PasswordChangeRequest,
+                                   user: sqlite3.Row = Depends(auth.require_user)):
+    if not auth.verify_password(body.current_password, user["password_hash"]):
+        raise HTTPException(401, "Aktuelles Passwort ist falsch")
+    with closing(db()) as conn:
+        conn.execute("UPDATE users SET password_hash=? WHERE id=?",
+                     (auth.hash_password(body.new_password), user["id"]))
+        conn.commit()
+        auth.delete_sessions_for_user(conn, user["id"])
+    return {"ok": True, "message": "Passwort geändert — bitte erneut anmelden."}
+
+
+@app.post("/api/account/totp/setup")
+async def account_totp_setup(user: sqlite3.Row = Depends(auth.require_user)):
+    secret = auth.generate_totp_secret()
+    with closing(db()) as conn:
+        conn.execute("UPDATE users SET totp_secret=?, totp_enabled=0 WHERE id=?",
+                     (secret, user["id"]))
+        conn.commit()
+    uri = auth.totp_provisioning_uri(secret, user["username"])
+    return {"secret": secret, "otpauth_uri": uri, "qr_svg": auth.totp_qr_svg(uri)}
+
+
+@app.post("/api/account/totp/confirm")
+async def account_totp_confirm(body: TotpConfirmRequest, user: sqlite3.Row = Depends(auth.require_user)):
+    with closing(db()) as conn:
+        current = auth.get_user_by_id(conn, user["id"])
+        if not current["totp_secret"]:
+            raise HTTPException(400, "Kein TOTP-Setup gestartet")
+        if not auth.verify_totp(current["totp_secret"], body.code):
+            raise HTTPException(400, "Ungültiger Code")
+        conn.execute("UPDATE users SET totp_enabled=1 WHERE id=?", (user["id"],))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/api/account/totp/disable")
+async def account_totp_disable(body: TotpDisableRequest, user: sqlite3.Row = Depends(auth.require_user)):
+    if not auth.verify_password(body.current_password, user["password_hash"]):
+        raise HTTPException(401, "Passwort ist falsch")
+    with closing(db()) as conn:
+        conn.execute("UPDATE users SET totp_secret=NULL, totp_enabled=0 WHERE id=?", (user["id"],))
+        conn.commit()
+    return {"ok": True}
+
+
+@app.post("/api/account/webauthn/register/options")
+async def account_webauthn_register_options(request: Request, user: sqlite3.Row = Depends(auth.require_user)):
+    context = auth.resolve_webauthn_context(request)
+    if not context["available"]:
+        raise HTTPException(400, "Passkeys sind auf diesem Host nicht verfügbar (HTTPS oder 'localhost' nötig)")
+    with closing(db()) as conn:
+        options, challenge_token = auth.webauthn_registration_options(conn, user, context)
+    return {"options": options, "challenge_token": challenge_token}
+
+
+@app.post("/api/account/webauthn/register/verify")
+async def account_webauthn_register_verify(body: WebAuthnRegisterVerifyRequest, request: Request,
+                                            user: sqlite3.Row = Depends(auth.require_user)):
+    context = auth.resolve_webauthn_context(request)
+    with closing(db()) as conn:
+        auth.webauthn_finish_registration(conn, context, body.challenge_token, body.credential, body.nickname)
+    return {"ok": True}
+
+
+@app.delete("/api/account/webauthn/{credential_row_id}")
+async def account_webauthn_delete(credential_row_id: int, user: sqlite3.Row = Depends(auth.require_user)):
+    with closing(db()) as conn:
+        cur = conn.execute(
+            "DELETE FROM webauthn_credentials WHERE id=? AND user_id=?",
+            (credential_row_id, user["id"]),
+        )
+        conn.commit()
+    if cur.rowcount == 0:
+        raise HTTPException(404, "passkey not found")
+    return {"ok": True}
+
+
+# ── User management (admin only) ────────────────────────────────────────────
+@app.get("/api/users")
+async def users_list(_: sqlite3.Row = Depends(auth.require_admin)):
+    with closing(db()) as conn:
+        rows = conn.execute("SELECT * FROM users ORDER BY username").fetchall()
+        out = []
+        for row in rows:
+            credential_count = conn.execute(
+                "SELECT COUNT(*) c FROM webauthn_credentials WHERE user_id=?", (row["id"],)
+            ).fetchone()["c"]
+            out.append(auth.public_user(row) | {"webauthn_count": credential_count})
+    return out
+
+
+@app.post("/api/users")
+async def users_create(body: UserCreateRequest, admin: sqlite3.Row = Depends(auth.require_admin)):
+    with closing(db()) as conn:
+        try:
+            user_id = auth.create_user(conn, body.username, body.password, body.is_admin)
+        except sqlite3.IntegrityError:
+            raise HTTPException(409, "Benutzername bereits vergeben")
+        user = auth.get_user_by_id(conn, user_id)
+    return auth.public_user(user)
+
+
+@app.delete("/api/users/{user_id}")
+async def users_delete(user_id: int, admin: sqlite3.Row = Depends(auth.require_admin)):
+    with closing(db()) as conn:
+        target = auth.get_user_by_id(conn, user_id)
+        if not target:
+            raise HTTPException(404, "user not found")
+        if target["is_admin"] and auth.count_admins(conn) <= 1:
+            raise HTTPException(409, "der letzte Administrator kann nicht gelöscht werden")
+        conn.execute("DELETE FROM users WHERE id=?", (user_id,))
+        conn.commit()
+    return {"ok": True}
+
+
 # ── Agent-Suite: Dateiauflösung für Enrollment & Self-Update ────────────────
 AGENT_DIR_CANDIDATES = [
     os.path.join(os.path.dirname(BASE), "agent"),
@@ -339,8 +639,7 @@ class Peer(BaseModel):
 
 
 @app.get("/api/peers")
-async def peers_list(authorization: str = Header(default="")):
-    require_token(authorization, ADMIN_TOKEN)
+async def peers_list(_: sqlite3.Row = Depends(auth.require_user)):
     with closing(db()) as conn:
         rows = conn.execute("SELECT * FROM peers ORDER BY name").fetchall()
     peers = []
@@ -353,8 +652,7 @@ async def peers_list(authorization: str = Header(default="")):
 
 
 @app.post("/api/peers")
-async def peers_create(p: Peer, request: Request, authorization: str = Header(default="")):
-    require_token(authorization, ADMIN_TOKEN)
+async def peers_create(p: Peer, request: Request, _: sqlite3.Row = Depends(auth.require_user)):
     key = secrets.token_urlsafe(24)
     with closing(db()) as conn:
         try:
@@ -370,8 +668,7 @@ async def peers_create(p: Peer, request: Request, authorization: str = Header(de
 
 
 @app.delete("/api/peers/{name}")
-async def peers_delete(name: str, authorization: str = Header(default="")):
-    require_token(authorization, ADMIN_TOKEN)
+async def peers_delete(name: str, _: sqlite3.Row = Depends(auth.require_user)):
     with closing(db()) as conn:
         cur = conn.execute("DELETE FROM peers WHERE name=?", (name,))
         conn.commit()
@@ -583,8 +880,7 @@ def _invalidate_version_cache():
 
 
 @app.get("/api/settings/version")
-async def version(authorization: str = Header(default="")):
-    require_token(authorization, ADMIN_TOKEN)
+async def version(_: sqlite3.Row = Depends(auth.require_user)):
     now = time.monotonic()
     if _version_cache["value"] is not None and now < _version_cache["expires"]:
         return _version_cache["value"]
@@ -618,8 +914,7 @@ def _start_update(script: str):
 
 
 @app.post("/api/settings/update")
-async def run_update(authorization: str = Header(default="")):
-    require_token(authorization, ADMIN_TOKEN)
+async def run_update(_: sqlite3.Row = Depends(auth.require_user)):
     repo_dir = os.path.realpath(REPO_DIR)
     script = os.path.realpath(os.path.join(repo_dir, "update.sh"))
     if os.path.dirname(script) != repo_dir or not os.path.isfile(script):
@@ -642,8 +937,7 @@ def _read_update_log():
 
 
 @app.get("/api/settings/update-log")
-async def update_log(authorization: str = Header(default="")):
-    require_token(authorization, ADMIN_TOKEN)
+async def update_log(_: sqlite3.Row = Depends(auth.require_user)):
     try:
         return PlainTextResponse(await asyncio.to_thread(_read_update_log))
     except OSError:
